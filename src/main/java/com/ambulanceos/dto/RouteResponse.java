@@ -18,13 +18,22 @@ public record RouteResponse(
 
         double distanceKm,
 
+        double estimatedTravelTimeMinutes,
+
+        String trafficLevel,
+
+        List<String> nodePath,
+
         List<RoutePoint> route
 
 ) {
 
     public record RoutePoint(
+
             double latitude,
+
             double longitude
+
     ) {
     }
 }

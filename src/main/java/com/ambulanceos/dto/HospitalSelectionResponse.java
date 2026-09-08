@@ -14,7 +14,11 @@ public record HospitalSelectionResponse(
 
         Integer availableBeds,
 
-        Double distanceKm
+        Double distanceKm,
+
+        Double estimatedTravelTimeMinutes,
+
+        String trafficLevel
 
 ) {
 }

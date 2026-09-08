@@ -1,7 +1,7 @@
 package com.ambulanceos.service;
 
-import com.ambulanceos.dto.DijkstraResponse;
 import com.ambulanceos.dto.RouteResponse;
+import com.ambulanceos.dto.TrafficDijkstraResponse;
 import com.ambulanceos.entity.Ambulance;
 import com.ambulanceos.entity.Hospital;
 import com.ambulanceos.graph.GraphNode;
@@ -24,38 +24,48 @@ public class RouteService {
 
     private final GurgaonRoadGraph roadGraph;
 
-    private final DijkstraService dijkstraService;
+    private final TrafficAwareDijkstraService
+            trafficAwareDijkstraService;
 
 
     // =========================================================
-    // FIND ROUTE FROM AMBULANCE TO HOSPITAL
+    // FIND TRAFFIC-AWARE AMBULANCE → HOSPITAL ROUTE
     // =========================================================
     //
     // Flow:
     //
-    // Ambulance coordinates
-    //        ↓
-    // Find nearest graph node
-    //        ↓
-    // Dijkstra shortest path
-    //        ↓
-    // Hospital graph node
-    //        ↓
-    // Hospital coordinates
+    // Ambulance
+    //      ↓
+    // Find nearest OSM road node
+    //      ↓
+    // Traffic-Aware Dijkstra
+    //      ↓
+    // Hospital
+    //      ↓
+    // Traffic-optimized path
+    //      ↓
+    // Convert OSM nodes to coordinates
+    //      ↓
+    // Return route for Leaflet
     //
     // =========================================================
 
     public RouteResponse findRoute(
+
             Long ambulanceId,
+
             Long hospitalId
+
     ) {
 
-        // -----------------------------------------------------
-        // 1. Find ambulance from PostgreSQL
-        // -----------------------------------------------------
+        // =====================================================
+        // 1. FIND AMBULANCE
+        // =====================================================
 
         Ambulance ambulance =
-                ambulanceRepository.findById(ambulanceId)
+                ambulanceRepository.findById(
+                                ambulanceId
+                        )
                         .orElseThrow(() ->
                                 new RuntimeException(
                                         "Ambulance not found with id: "
@@ -64,12 +74,14 @@ public class RouteService {
                         );
 
 
-        // -----------------------------------------------------
-        // 2. Find hospital from PostgreSQL
-        // -----------------------------------------------------
+        // =====================================================
+        // 2. FIND HOSPITAL
+        // =====================================================
 
         Hospital hospital =
-                hospitalRepository.findById(hospitalId)
+                hospitalRepository.findById(
+                                hospitalId
+                        )
                         .orElseThrow(() ->
                                 new RuntimeException(
                                         "Hospital not found with id: "
@@ -78,149 +90,204 @@ public class RouteService {
                         );
 
 
-        // -----------------------------------------------------
-        // 3. Find nearest graph node to ambulance
-        // -----------------------------------------------------
-        //
-        // The ambulance has real GPS coordinates.
-        //
-        // Our Dijkstra algorithm works on graph nodes.
-        //
-        // Therefore we map the real ambulance location
-        // to the closest graph node.
-        // -----------------------------------------------------
+        // =====================================================
+        // 3. FIND NEAREST OSM NODE TO AMBULANCE
+        // =====================================================
 
         GraphNode sourceNode =
-                findNearestGraphNode(
+                roadGraph.findNearestNode(
                         ambulance.getLatitude(),
                         ambulance.getLongitude()
                 );
 
 
-        // -----------------------------------------------------
-        // 4. Find nearest graph node to hospital
-        // -----------------------------------------------------
+        if (sourceNode == null) {
+
+            throw new RuntimeException(
+                    "Unable to find road node near ambulance"
+            );
+        }
+
+
+        // =====================================================
+        // 4. FIND NEAREST OSM NODE TO HOSPITAL
+        // =====================================================
 
         GraphNode destinationNode =
-                findNearestGraphNode(
+                roadGraph.findNearestNode(
                         hospital.getLatitude(),
                         hospital.getLongitude()
                 );
 
 
-        // -----------------------------------------------------
-        // 5. Run Dijkstra
-        // -----------------------------------------------------
+        if (destinationNode == null) {
+
+            throw new RuntimeException(
+                    "Unable to find road node near hospital"
+            );
+        }
+
+
+        // =====================================================
+        // 5. RUN TRAFFIC-AWARE DIJKSTRA
+        // =====================================================
         //
-        // Dijkstra calculates the shortest path between
-        // the two graph nodes.
+        // Instead of normal Dijkstra:
         //
-        // Example:
+        //     distance only
         //
-        // G01 → G09 → G10
+        // we now use:
         //
-        // -----------------------------------------------------
+        //     traffic-adjusted route cost
+        //
+        // The TrafficAwareDijkstraService returns:
+        //
+        //     physical distance
+        //     estimated travel time
+        //     traffic level
+        //     optimized node path
+        //
+        // =====================================================
 
-        DijkstraResponse dijkstraResponse =
-                dijkstraService.findShortestPath(
-
-                        sourceNode.id(),
-
-                        destinationNode.id()
-
-                );
+        TrafficDijkstraResponse trafficRoute =
+                trafficAwareDijkstraService
+                        .findShortestPath(
+                                sourceNode.id(),
+                                destinationNode.id()
+                        );
 
 
-        // -----------------------------------------------------
-        // 6. Create route coordinate list
-        // -----------------------------------------------------
+        // =====================================================
+        // 6. GET NODE PATH
+        // =====================================================
+
+        List<String> nodePath =
+                trafficRoute.path();
+
+
+        // =====================================================
+        // 7. CONVERT GRAPH NODES TO LATITUDE/LONGITUDE
+        // =====================================================
+        //
+        // Leaflet needs:
+        //
+        //     [latitude, longitude]
+        //
+        // for every point in the route.
+        //
+        // =====================================================
 
         List<RouteResponse.RoutePoint> route =
                 new ArrayList<>();
 
 
-        // -----------------------------------------------------
-        // 7. Add ACTUAL ambulance location
-        // -----------------------------------------------------
-        //
-        // This makes the route begin exactly where the
-        // ambulance is stored in PostgreSQL.
-        // -----------------------------------------------------
-
-        addRoutePointIfDifferent(
-
-                route,
-
-                ambulance.getLatitude(),
-
-                ambulance.getLongitude()
-
-        );
-
-
-        // -----------------------------------------------------
-        // 8. Add Dijkstra graph path
-        // -----------------------------------------------------
-        //
-        // Convert:
-        //
-        // G01 → G09 → G10
-        //
-        // into:
-        //
-        // latitude / longitude coordinates
-        //
-        // -----------------------------------------------------
-
-        for (String nodeId :
-                dijkstraResponse.path()) {
+        for (
+                String nodeId :
+                nodePath
+        ) {
 
             GraphNode node =
-                    roadGraph.getNode(nodeId);
+                    roadGraph.getNode(
+                            nodeId
+                    );
 
 
             if (node == null) {
 
                 throw new RuntimeException(
-                        "Graph node not found: " + nodeId
+                        "Route node not found in graph: "
+                                + nodeId
                 );
             }
 
 
-            addRoutePointIfDifferent(
+            route.add(
+                    new RouteResponse.RoutePoint(
 
-                    route,
+                            node.latitude(),
 
-                    node.latitude(),
+                            node.longitude()
 
-                    node.longitude()
-
+                    )
             );
         }
 
 
-        // -----------------------------------------------------
-        // 9. Add ACTUAL hospital location
-        // -----------------------------------------------------
-        //
-        // This makes the route finish exactly at the
-        // hospital coordinates stored in PostgreSQL.
-        // -----------------------------------------------------
+        // =====================================================
+        // 8. LOG ROUTE INFORMATION
+        // =====================================================
 
-        addRoutePointIfDifferent(
+        System.out.println();
 
-                route,
-
-                hospital.getLatitude(),
-
-                hospital.getLongitude()
-
+        System.out.println(
+                "=========================================="
         );
 
+        System.out.println(
+                " Traffic-Aware Ambulance → Hospital Route"
+        );
 
-        // -----------------------------------------------------
-        // 10. Return complete route response
-        // -----------------------------------------------------
+        System.out.println(
+                "=========================================="
+        );
+
+        System.out.println(
+                "Ambulance: "
+                        + ambulance.getAmbulanceNumber()
+        );
+
+        System.out.println(
+                "Hospital: "
+                        + hospital.getName()
+        );
+
+        System.out.println(
+                "Source Node: "
+                        + sourceNode.id()
+        );
+
+        System.out.println(
+                "Destination Node: "
+                        + destinationNode.id()
+        );
+
+        System.out.println(
+                "Route Distance: "
+                        + trafficRoute.distanceKm()
+                        + " km"
+        );
+
+        System.out.println(
+                "Estimated Travel Time: "
+                        + trafficRoute
+                        .estimatedTravelTimeMinutes()
+                        + " min"
+        );
+
+        System.out.println(
+                "Traffic Level: "
+                        + trafficRoute.trafficLevel()
+        );
+
+        System.out.println(
+                "Graph Nodes: "
+                        + nodePath.size()
+        );
+
+        System.out.println(
+                "Algorithm: Traffic-Aware Dijkstra"
+        );
+
+        System.out.println(
+                "=========================================="
+        );
+
+        System.out.println();
+
+
+        // =====================================================
+        // 9. RETURN COMPLETE ROUTE
+        // =====================================================
 
         return new RouteResponse(
 
@@ -236,250 +303,17 @@ public class RouteService {
 
                 destinationNode.id(),
 
-                dijkstraResponse.distanceKm(),
+                trafficRoute.distanceKm(),
+
+                trafficRoute
+                        .estimatedTravelTimeMinutes(),
+
+                trafficRoute.trafficLevel(),
+
+                nodePath,
 
                 route
 
         );
-    }
-
-
-    // =========================================================
-    // FIND NEAREST GRAPH NODE
-    // =========================================================
-    //
-    // Compare a real-world latitude/longitude against every
-    // node in the Gurgaon road graph.
-    //
-    // The node with the smallest geographic distance wins.
-    //
-    // This is what connects our database locations with
-    // our graph-based Dijkstra algorithm.
-    //
-    // =========================================================
-
-    private GraphNode findNearestGraphNode(
-
-            double latitude,
-
-            double longitude
-
-    ) {
-
-        GraphNode nearestNode = null;
-
-        double smallestDistance =
-                Double.POSITIVE_INFINITY;
-
-
-        // -----------------------------------------------------
-        // Check every graph node
-        // -----------------------------------------------------
-
-        for (GraphNode node :
-                roadGraph.getNodes().values()) {
-
-            double distance =
-                    calculateDistance(
-
-                            latitude,
-                            longitude,
-
-                            node.latitude(),
-                            node.longitude()
-
-                    );
-
-
-            // -------------------------------------------------
-            // If this node is closer, make it the new nearest
-            // node.
-            // -------------------------------------------------
-
-            if (distance < smallestDistance) {
-
-                smallestDistance = distance;
-
-                nearestNode = node;
-            }
-        }
-
-
-        // -----------------------------------------------------
-        // Safety check
-        // -----------------------------------------------------
-
-        if (nearestNode == null) {
-
-            throw new RuntimeException(
-                    "Unable to find nearest graph node"
-            );
-        }
-
-
-        return nearestNode;
-    }
-
-
-    // =========================================================
-    // ADD ROUTE POINT
-    // =========================================================
-    //
-    // Prevent duplicate consecutive coordinates.
-    //
-    // For example:
-    //
-    // Ambulance
-    //     ↓
-    // G01
-    //
-    // If ambulance coordinates are exactly G01 coordinates,
-    // we don't add the same point twice.
-    //
-    // =========================================================
-
-    private void addRoutePointIfDifferent(
-
-            List<RouteResponse.RoutePoint> route,
-
-            double latitude,
-
-            double longitude
-
-    ) {
-
-        if (route.isEmpty()) {
-
-            route.add(
-                    new RouteResponse.RoutePoint(
-                            latitude,
-                            longitude
-                    )
-            );
-
-            return;
-        }
-
-
-        RouteResponse.RoutePoint lastPoint =
-                route.get(
-                        route.size() - 1
-                );
-
-
-        // -----------------------------------------------------
-        // Compare coordinates with very small tolerance.
-        // -----------------------------------------------------
-
-        double latitudeDifference =
-                Math.abs(
-                        lastPoint.latitude()
-                                - latitude
-                );
-
-
-        double longitudeDifference =
-                Math.abs(
-                        lastPoint.longitude()
-                                - longitude
-                );
-
-
-        if (latitudeDifference > 0.000001
-                || longitudeDifference > 0.000001) {
-
-            route.add(
-                    new RouteResponse.RoutePoint(
-                            latitude,
-                            longitude
-                    )
-            );
-        }
-    }
-
-
-    // =========================================================
-    // HAVERSINE DISTANCE
-    // =========================================================
-    //
-    // Calculates geographic distance between two coordinates.
-    //
-    // Used to determine which graph node is closest to the
-    // ambulance/hospital.
-    //
-    // =========================================================
-
-    private double calculateDistance(
-
-            double latitude1,
-            double longitude1,
-
-            double latitude2,
-            double longitude2
-
-    ) {
-
-        final double EARTH_RADIUS_KM =
-                6371.0;
-
-
-        double lat1 =
-                Math.toRadians(
-                        latitude1
-                );
-
-        double lat2 =
-                Math.toRadians(
-                        latitude2
-                );
-
-
-        double deltaLatitude =
-                Math.toRadians(
-                        latitude2 - latitude1
-                );
-
-        double deltaLongitude =
-                Math.toRadians(
-                        longitude2 - longitude1
-                );
-
-
-        double a =
-
-                Math.sin(
-                        deltaLatitude / 2
-                )
-                        *
-                        Math.sin(
-                                deltaLatitude / 2
-                        )
-
-                        +
-
-                        Math.cos(lat1)
-                                *
-                                Math.cos(lat2)
-                                *
-                                Math.sin(
-                                        deltaLongitude / 2
-                                )
-                                *
-                                Math.sin(
-                                        deltaLongitude / 2
-                                );
-
-
-        double c =
-                2 * Math.atan2(
-
-                        Math.sqrt(a),
-
-                        Math.sqrt(1 - a)
-
-                );
-
-
-        return EARTH_RADIUS_KM * c;
     }
 }

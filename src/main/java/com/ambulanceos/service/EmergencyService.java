@@ -29,52 +29,65 @@ public class EmergencyService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        Emergency savedEmergency = emergencyRepository.save(emergency);
+        Emergency savedEmergency =
+                emergencyRepository.save(emergency);
 
         return mapToResponse(savedEmergency);
     }
 
-
     public List<EmergencyResponse> getAllEmergencies() {
-
         return emergencyRepository.findAll()
                 .stream()
                 .map(this::mapToResponse)
                 .toList();
     }
 
-
     public EmergencyResponse getEmergencyById(Long id) {
 
-        Emergency emergency = emergencyRepository.findById(id)
-                .orElseThrow(() ->
-                        new RuntimeException("Emergency not found with id: " + id)
-                );
+        Emergency emergency =
+                emergencyRepository.findById(id)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Emergency not found with id: "
+                                                + id
+                                )
+                        );
 
         return mapToResponse(emergency);
     }
 
+    public EmergencyResponse updateStatus(
+            Long id,
+            String status
+    ) {
+
+        Emergency emergency =
+                emergencyRepository.findById(id)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Emergency not found with id: "
+                                                + id
+                                )
+                        );
+
+        emergency.setStatus(status);
+
+        Emergency updatedEmergency =
+                emergencyRepository.save(emergency);
+
+        return mapToResponse(updatedEmergency);
+    }
 
     private EmergencyResponse mapToResponse(Emergency emergency) {
-
         return new EmergencyResponse(
-
                 emergency.getId(),
-
                 emergency.getLocation(),
-
                 emergency.getLatitude(),
-
                 emergency.getLongitude(),
-
                 emergency.getPriority(),
-
                 emergency.getFacility(),
-
                 emergency.getNotes(),
-
                 emergency.getStatus(),
-
                 emergency.getCreatedAt()
         );
     }

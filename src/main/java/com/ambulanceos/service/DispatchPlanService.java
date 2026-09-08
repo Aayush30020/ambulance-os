@@ -3,6 +3,7 @@ package com.ambulanceos.service;
 import com.ambulanceos.dto.DispatchPlanResponse;
 import com.ambulanceos.dto.DispatchResponse;
 import com.ambulanceos.dto.HospitalSelectionResponse;
+import com.ambulanceos.dto.TripRoute;
 import com.ambulanceos.entity.Ambulance;
 import com.ambulanceos.entity.Emergency;
 import com.ambulanceos.entity.Hospital;
@@ -13,6 +14,10 @@ import com.ambulanceos.repository.EmergencyRepository;
 import com.ambulanceos.repository.HospitalRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -32,17 +37,43 @@ public class DispatchPlanService {
 
     private final GurgaonRoadGraph roadGraph;
 
+    private final TrafficAwareDijkstraService
+            trafficAwareDijkstraService;
 
+
+    // =========================================================
+    // CREATE COMPLETE DISPATCH PLAN
+    // =========================================================
+    //
+    // Emergency
+    //      ↓
+    // Best ambulance
+    //      ↓
+    // Route ambulance → emergency
+    //      ↓
+    // Select hospital
+    //      ↓
+    // Route emergency → hospital
+    //      ↓
+    // Mark ambulance EN_ROUTE
+    //      ↓
+    // Return complete trip
+    //
+    // =========================================================
+
+    @Transactional
     public DispatchPlanResponse createDispatchPlan(
             Long emergencyId
     ) {
 
-        // =========================================================
-        // STEP 1: Find the emergency
-        // =========================================================
+        // =====================================================
+        // STEP 1: FIND EMERGENCY
+        // =====================================================
 
         Emergency emergency =
-                emergencyRepository.findById(emergencyId)
+                emergencyRepository.findById(
+                                emergencyId
+                        )
                         .orElseThrow(() ->
                                 new RuntimeException(
                                         "Emergency not found with id: "
@@ -51,43 +82,19 @@ public class DispatchPlanService {
                         );
 
 
-        // =========================================================
-        // STEP 2: Find and dispatch the best ambulance
-        //
-        // DispatchService uses:
-        // - AVAILABLE ambulances
-        // - Haversine distance to nearest graph node
-        // - Dijkstra shortest path
-        // - PriorityQueue
-        //
-        // The selected ambulance becomes EN_ROUTE.
-        // =========================================================
+        // =====================================================
+        // STEP 2: FIND BEST AVAILABLE AMBULANCE
+        // =====================================================
 
         DispatchResponse ambulanceResponse =
-                dispatchService.dispatchAmbulance(
+                dispatchService.findBestAmbulance(
                         emergencyId
                 );
 
 
-        // =========================================================
-        // STEP 3: Find the best hospital
-        //
-        // HospitalSelectionService considers:
-        // - Available beds
-        // - Required facility
-        // - Dijkstra shortest path
-        // - PriorityQueue
-        // =========================================================
-
-        HospitalSelectionResponse hospitalResponse =
-                hospitalSelectionService.findBestHospital(
-                        emergencyId
-                );
-
-
-        // =========================================================
-        // STEP 4: Load the selected ambulance
-        // =========================================================
+        // =====================================================
+        // STEP 3: LOAD AMBULANCE
+        // =====================================================
 
         Ambulance ambulance =
                 ambulanceRepository.findById(
@@ -100,9 +107,19 @@ public class DispatchPlanService {
                         );
 
 
-        // =========================================================
-        // STEP 5: Load the selected hospital
-        // =========================================================
+        // =====================================================
+        // STEP 4: FIND BEST HOSPITAL
+        // =====================================================
+
+        HospitalSelectionResponse hospitalResponse =
+                hospitalSelectionService.findBestHospital(
+                        emergencyId
+                );
+
+
+        // =====================================================
+        // STEP 5: LOAD HOSPITAL
+        // =====================================================
 
         Hospital hospital =
                 hospitalRepository.findById(
@@ -115,15 +132,101 @@ public class DispatchPlanService {
                         );
 
 
-        // =========================================================
-        // STEP 6: Calculate ambulance → hospital route
+        // =====================================================
+        // STEP 6: ROUTE AMBULANCE → EMERGENCY
+        // =====================================================
+
+        GraphNode ambulanceNode =
+                roadGraph.findNearestNode(
+                        ambulance.getLatitude(),
+                        ambulance.getLongitude()
+                );
+
+
+        if (ambulanceNode == null) {
+
+            throw new RuntimeException(
+                    "Unable to find road node near ambulance"
+            );
+        }
+
+
+        GraphNode emergencyNode =
+                roadGraph.findNearestNode(
+                        emergency.getLatitude(),
+                        emergency.getLongitude()
+                );
+
+
+        if (emergencyNode == null) {
+
+            throw new RuntimeException(
+                    "Unable to find road node near emergency"
+            );
+        }
+
+
+        var ambulanceToEmergency =
+                trafficAwareDijkstraService
+                        .findShortestPath(
+                                ambulanceNode.id(),
+                                emergencyNode.id()
+                        );
+
+
+        TripRoute.RouteSegment
+                routeToEmergency =
+                createRouteSegment(
+                        ambulanceToEmergency
+                );
+
+
+        // =====================================================
+        // STEP 7: ROUTE EMERGENCY → HOSPITAL
+        // =====================================================
         //
-        // RouteService:
-        // - Finds nearest graph node to ambulance
-        // - Finds nearest graph node to hospital
-        // - Runs Dijkstra
-        // - Returns route coordinates
-        // =========================================================
+        // This is the second phase of the trip.
+        //
+        // =====================================================
+
+        GraphNode hospitalNode =
+                roadGraph.findNearestNode(
+                        hospital.getLatitude(),
+                        hospital.getLongitude()
+                );
+
+
+        if (hospitalNode == null) {
+
+            throw new RuntimeException(
+                    "Unable to find road node near hospital"
+            );
+        }
+
+
+        var emergencyToHospital =
+                trafficAwareDijkstraService
+                        .findShortestPath(
+                                emergencyNode.id(),
+                                hospitalNode.id()
+                        );
+
+
+        TripRoute.RouteSegment
+                routeToHospital =
+                createRouteSegment(
+                        emergencyToHospital
+                );
+
+
+        // =====================================================
+        // STEP 8: CALCULATE EXISTING FINAL ROUTE
+        // =====================================================
+        //
+        // Keep the existing route response so your current
+        // dashboard remains compatible.
+        //
+        // =====================================================
 
         var routeResponse =
                 routeService.findRoute(
@@ -132,135 +235,207 @@ public class DispatchPlanService {
                 );
 
 
-        // =========================================================
-        // STEP 7: Convert route coordinates into graph node IDs
+        // =====================================================
+        // STEP 9: ALL ROUTES SUCCESSFUL
+        // =====================================================
         //
-        // The ambulance's exact GPS location may NOT be a graph
-        // node. Therefore findNodeId() can return "UNKNOWN".
+        // Only now change:
         //
-        // We remove UNKNOWN values because the Dijkstra route
-        // itself starts from the nearest graph node.
-        // =========================================================
+        // AVAILABLE → EN_ROUTE
+        //
+        // =====================================================
 
-        var routeNodes =
-                routeResponse.route()
-                        .stream()
-                        .map(point ->
-                                findNodeId(
-                                        point.latitude(),
-                                        point.longitude()
-                                )
-                        )
-                        .filter(nodeId ->
-                                !"UNKNOWN".equals(nodeId)
-                        )
-                        .toList();
+        ambulance.setStatus(
+                "EN_ROUTE"
+        );
+
+        ambulance =
+                ambulanceRepository.save(
+                        ambulance
+                );
 
 
-        // =========================================================
-        // STEP 8: Create the complete dispatch plan response
-        // =========================================================
+        // =====================================================
+        // STEP 10: CREATE TRIP
+        // =====================================================
+
+        TripRoute trip =
+                new TripRoute(
+
+                        TripRoute.TripStatus
+                                .TO_EMERGENCY,
+
+                        routeToEmergency,
+
+                        routeToHospital
+
+                );
+
+
+        // =====================================================
+        // STEP 11: RETURN COMPLETE PLAN
+        // =====================================================
 
         return new DispatchPlanResponse(
 
                 emergency.getId(),
 
+
                 // -------------------------------------------------
-                // Selected ambulance
+                // AMBULANCE
                 // -------------------------------------------------
 
-                new DispatchPlanResponse.AmbulanceDetails(
+                new DispatchPlanResponse
+                        .AmbulanceDetails(
+
                         ambulance.getId(),
-                        ambulance.getAmbulanceNumber(),
+
+                        ambulance
+                                .getAmbulanceNumber(),
+
                         ambulance.getType(),
+
                         ambulance.getStatus(),
-                        ambulanceResponse.distanceKm()
+
+                        ambulanceResponse
+                                .distanceKm(),
+
+                        ambulanceResponse
+                                .estimatedTravelTimeMinutes(),
+
+                        ambulanceResponse
+                                .trafficLevel()
+
                 ),
 
+
                 // -------------------------------------------------
-                // Selected hospital
+                // HOSPITAL
                 // -------------------------------------------------
 
-                new DispatchPlanResponse.HospitalDetails(
+                new DispatchPlanResponse
+                        .HospitalDetails(
+
                         hospital.getId(),
+
                         hospital.getHospitalCode(),
+
                         hospital.getName(),
+
                         hospital.getFacilityType(),
+
                         hospital.getAvailableBeds(),
-                        hospitalResponse.distanceKm()
+
+                        hospitalResponse
+                                .distanceKm(),
+
+                        hospitalResponse
+                                .estimatedTravelTimeMinutes(),
+
+                        hospitalResponse
+                                .trafficLevel()
+
                 ),
 
+
                 // -------------------------------------------------
-                // Optimized route
+                // EXISTING ROUTE
                 // -------------------------------------------------
 
-                new DispatchPlanResponse.RouteDetails(
-                        routeResponse.sourceNode(),
-                        routeResponse.destinationNode(),
-                        routeResponse.distanceKm(),
-                        routeNodes
-                )
+                new DispatchPlanResponse
+                        .RouteDetails(
+
+                        routeResponse
+                                .sourceNode(),
+
+                        routeResponse
+                                .destinationNode(),
+
+                        routeResponse
+                                .distanceKm(),
+
+                        routeResponse
+                                .estimatedTravelTimeMinutes(),
+
+                        routeResponse
+                                .trafficLevel(),
+
+                        routeResponse
+                                .nodePath()
+
+                ),
+
+
+                // -------------------------------------------------
+                // COMPLETE TRIP
+                // -------------------------------------------------
+
+                trip
+
         );
     }
 
 
-    // =============================================================
-    // Find the graph node corresponding to route coordinates
-    // =============================================================
+    // =========================================================
+    // CREATE ROUTE SEGMENT
+    // =========================================================
 
-    private String findNodeId(
-            double latitude,
-            double longitude
+    private TripRoute.RouteSegment
+    createRouteSegment(
+            com.ambulanceos.dto.TrafficDijkstraResponse
+                    response
     ) {
 
-        /*
-         * Floating-point numbers should not normally be compared
-         * using exact equality.
-         *
-         * Example:
-         *
-         * 28.4595000001
-         *
-         * and
-         *
-         * 28.4595
-         *
-         * represent practically the same coordinate, but Java's
-         * exact comparison may consider them different.
-         *
-         * Therefore we use a small tolerance.
-         */
-
-        final double EPSILON = 0.000001;
+        List<TripRoute.RoutePoint>
+                coordinates =
+                new ArrayList<>();
 
 
-        for (GraphNode node :
-                roadGraph.getNodes().values()) {
+        for (
+                String nodeId :
+                response.path()
+        ) {
 
-            boolean latitudeMatches =
-                    Math.abs(
-                            node.latitude() - latitude
-                    ) < EPSILON;
-
-
-            boolean longitudeMatches =
-                    Math.abs(
-                            node.longitude() - longitude
-                    ) < EPSILON;
+            GraphNode node =
+                    roadGraph.getNode(
+                            nodeId
+                    );
 
 
-            if (latitudeMatches
-                    && longitudeMatches) {
+            if (node == null) {
 
-                return node.id();
+                throw new RuntimeException(
+                        "Route node not found: "
+                                + nodeId
+                );
             }
+
+
+            coordinates.add(
+                    new TripRoute.RoutePoint(
+
+                            node.latitude(),
+
+                            node.longitude()
+
+                    )
+            );
         }
 
 
-        /*
-         * This can happen when the coordinate represents the
-         * ambulance's actual GPS location rather than a graph node.
-         */
-        return "UNKNOWN";
+        return new TripRoute.RouteSegment(
+
+                response.distanceKm(),
+
+                response
+                        .estimatedTravelTimeMinutes(),
+
+                response.trafficLevel(),
+
+                response.path(),
+
+                coordinates
+
+        );
     }
 }

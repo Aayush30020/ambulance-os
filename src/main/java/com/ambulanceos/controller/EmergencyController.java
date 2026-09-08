@@ -17,29 +17,34 @@ public class EmergencyController {
 
     private final EmergencyService emergencyService;
 
-
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public EmergencyResponse createEmergency(
             @Valid @RequestBody EmergencyRequest request
     ) {
-
         return emergencyService.createEmergency(request);
     }
 
-
     @GetMapping
     public List<EmergencyResponse> getAllEmergencies() {
-
         return emergencyService.getAllEmergencies();
     }
-
 
     @GetMapping("/{id}")
     public EmergencyResponse getEmergencyById(
             @PathVariable Long id
     ) {
-
         return emergencyService.getEmergencyById(id);
+    }
+
+    @PutMapping("/{id}/status")
+    public EmergencyResponse updateStatus(
+            @PathVariable Long id,
+            @RequestParam String status
+    ) {
+        return emergencyService.updateStatus(
+                id,
+                status
+        );
     }
 }

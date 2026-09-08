@@ -12,7 +12,11 @@ public record DispatchResponse(
 
         String ambulanceStatus,
 
-        Double distanceKm
+        double distanceKm,
+
+        double estimatedTravelTimeMinutes,
+
+        String trafficLevel
 
 ) {
 }

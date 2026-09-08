@@ -10,7 +10,9 @@ public record DispatchPlanResponse(
 
         HospitalDetails hospital,
 
-        RouteDetails route
+        RouteDetails route,
+
+        TripRoute trip
 
 ) {
 
@@ -24,7 +26,11 @@ public record DispatchPlanResponse(
 
             String status,
 
-            double distanceKm
+            double distanceKm,
+
+            double estimatedTravelTimeMinutes,
+
+            String trafficLevel
 
     ) {
     }
@@ -42,7 +48,11 @@ public record DispatchPlanResponse(
 
             Integer availableBeds,
 
-            double distanceKm
+            double distanceKm,
+
+            double estimatedTravelTimeMinutes,
+
+            String trafficLevel
 
     ) {
     }
@@ -55,6 +65,10 @@ public record DispatchPlanResponse(
             String destinationNode,
 
             double distanceKm,
+
+            double estimatedTravelTimeMinutes,
+
+            String trafficLevel,
 
             List<String> nodes
 

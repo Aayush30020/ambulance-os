@@ -1,7 +1,7 @@
 package com.ambulanceos.service;
 
-import com.ambulanceos.dto.DijkstraResponse;
 import com.ambulanceos.dto.DispatchResponse;
+import com.ambulanceos.dto.TrafficDijkstraResponse;
 import com.ambulanceos.entity.Ambulance;
 import com.ambulanceos.entity.Emergency;
 import com.ambulanceos.graph.GraphNode;
@@ -25,28 +25,27 @@ public class DispatchService {
 
     private final GurgaonRoadGraph roadGraph;
 
-    private final DijkstraService dijkstraService;
+    private final TrafficAwareDijkstraService
+            trafficAwareDijkstraService;
 
 
     // =========================================================
     // FIND BEST AVAILABLE AMBULANCE
     // =========================================================
     //
-    // Algorithm:
-    //
     // Emergency
-    //     ↓
+    //      ↓
     // AVAILABLE ambulances
-    //     ↓
-    // Map ambulance to nearest graph node
-    //     ↓
-    // Map emergency to nearest graph node
-    //     ↓
-    // Dijkstra shortest road distance
-    //     ↓
+    //      ↓
+    // Nearest OSM nodes
+    //      ↓
+    // Traffic-aware Dijkstra
+    //      ↓
+    // Estimated travel time
+    //      ↓
     // PriorityQueue
-    //     ↓
-    // Best ambulance
+    //      ↓
+    // Fastest ambulance
     //
     // =========================================================
 
@@ -54,12 +53,14 @@ public class DispatchService {
             Long emergencyId
     ) {
 
-        // -----------------------------------------------------
-        // 1. Find emergency
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 1: FIND EMERGENCY
+        // =====================================================
 
         Emergency emergency =
-                emergencyRepository.findById(emergencyId)
+                emergencyRepository.findById(
+                                emergencyId
+                        )
                         .orElseThrow(() ->
                                 new RuntimeException(
                                         "Emergency not found with id: "
@@ -68,44 +69,45 @@ public class DispatchService {
                         );
 
 
-        // -----------------------------------------------------
-        // 2. Find nearest graph node to emergency
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 2: FIND NEAREST GRAPH NODE
+        // =====================================================
 
         GraphNode emergencyNode =
-                findNearestGraphNode(
+                roadGraph.findNearestNode(
                         emergency.getLatitude(),
                         emergency.getLongitude()
                 );
 
 
-        // -----------------------------------------------------
-        // 3. Get all ambulances
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 3: GET ALL AMBULANCES
+        // =====================================================
 
         List<Ambulance> ambulances =
                 ambulanceRepository.findAll();
 
 
-        // -----------------------------------------------------
-        // 4. Create PriorityQueue
+        // =====================================================
+        // STEP 4: PRIORITY QUEUE
+        // =====================================================
         //
-        // Ambulance with smallest Dijkstra distance
-        // gets highest priority.
-        // -----------------------------------------------------
+        // Ambulance with the lowest traffic-adjusted
+        // travel time gets highest priority.
+        //
+        // =====================================================
 
         PriorityQueue<AmbulanceDistance> priorityQueue =
                 new PriorityQueue<>(
                         Comparator.comparingDouble(
-                                AmbulanceDistance::distanceKm
+                                AmbulanceDistance::travelTimeMinutes
                         )
                 );
 
 
-        // -----------------------------------------------------
-        // 5. Calculate Dijkstra distance for every
-        //    AVAILABLE ambulance
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 5: EVALUATE AVAILABLE AMBULANCES
+        // =====================================================
 
         for (Ambulance ambulance : ambulances) {
 
@@ -117,10 +119,12 @@ public class DispatchService {
             }
 
 
-            // Find graph node nearest to ambulance
+            // -------------------------------------------------
+            // Map ambulance GPS location to nearest OSM node.
+            // -------------------------------------------------
 
             GraphNode ambulanceNode =
-                    findNearestGraphNode(
+                    roadGraph.findNearestNode(
                             ambulance.getLatitude(),
                             ambulance.getLongitude()
                     );
@@ -129,41 +133,36 @@ public class DispatchService {
             try {
 
                 // -------------------------------------------------
-                // Run Dijkstra
+                // Traffic-aware Dijkstra
+                //
+                // Ambulance → Emergency
                 // -------------------------------------------------
 
-                DijkstraResponse route =
-                        dijkstraService.findShortestPath(
-                                ambulanceNode.id(),
-                                emergencyNode.id()
-                        );
-
-
-                double distanceKm =
-                        route.distanceKm();
+                TrafficDijkstraResponse route =
+                        trafficAwareDijkstraService
+                                .findShortestPath(
+                                        ambulanceNode.id(),
+                                        emergencyNode.id()
+                                );
 
 
                 // -------------------------------------------------
-                // Add ambulance to PriorityQueue
+                // Add ambulance candidate to PriorityQueue.
                 // -------------------------------------------------
 
                 priorityQueue.offer(
                         new AmbulanceDistance(
                                 ambulance,
-                                distanceKm
+                                route.distanceKm(),
+                                route.estimatedTravelTimeMinutes(),
+                                route.trafficLevel()
                         )
                 );
 
-
             } catch (RuntimeException exception) {
 
-                // -------------------------------------------------
-                // If no graph route exists for this ambulance,
-                // skip it and continue checking other ambulances.
-                // -------------------------------------------------
-
                 System.out.println(
-                        "No route found for ambulance "
+                        "No traffic-aware route found for ambulance "
                                 + ambulance.getAmbulanceNumber()
                                 + ": "
                                 + exception.getMessage()
@@ -172,10 +171,9 @@ public class DispatchService {
         }
 
 
-        // -----------------------------------------------------
-        // 6. Check whether an ambulance is available
-        //    and reachable
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 6: CHECK REACHABLE AMBULANCES
+        // =====================================================
 
         if (priorityQueue.isEmpty()) {
 
@@ -185,9 +183,9 @@ public class DispatchService {
         }
 
 
-        // -----------------------------------------------------
-        // 7. Get ambulance with smallest Dijkstra distance
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 7: SELECT FASTEST AMBULANCE
+        // =====================================================
 
         AmbulanceDistance best =
                 priorityQueue.poll();
@@ -197,14 +195,16 @@ public class DispatchService {
                 best.ambulance();
 
 
-        // -----------------------------------------------------
-        // 8. Return result
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 8: RETURN RESULT
+        // =====================================================
 
         return createResponse(
                 emergency,
                 ambulance,
-                best.distanceKm()
+                best.distanceKm(),
+                best.travelTimeMinutes(),
+                best.trafficLevel()
         );
     }
 
@@ -213,13 +213,15 @@ public class DispatchService {
     // DISPATCH AMBULANCE
     // =========================================================
     //
-    // This method actually changes:
-    //
     // AVAILABLE
-    //      ↓
+    //     ↓
+    // Traffic-aware Dijkstra
+    //     ↓
+    // PriorityQueue
+    //     ↓
+    // Fastest ambulance
+    //     ↓
     // EN_ROUTE
-    //
-    // The ambulance selected using Dijkstra is then dispatched.
     //
     // =========================================================
 
@@ -227,12 +229,14 @@ public class DispatchService {
             Long emergencyId
     ) {
 
-        // -----------------------------------------------------
-        // 1. Find emergency
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 1: FIND EMERGENCY
+        // =====================================================
 
         Emergency emergency =
-                emergencyRepository.findById(emergencyId)
+                emergencyRepository.findById(
+                                emergencyId
+                        )
                         .orElseThrow(() ->
                                 new RuntimeException(
                                         "Emergency not found with id: "
@@ -241,41 +245,40 @@ public class DispatchService {
                         );
 
 
-        // -----------------------------------------------------
-        // 2. Find nearest graph node to emergency
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 2: FIND NEAREST GRAPH NODE
+        // =====================================================
 
         GraphNode emergencyNode =
-                findNearestGraphNode(
+                roadGraph.findNearestNode(
                         emergency.getLatitude(),
                         emergency.getLongitude()
                 );
 
 
-        // -----------------------------------------------------
-        // 3. Get all ambulances
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 3: GET ALL AMBULANCES
+        // =====================================================
 
         List<Ambulance> ambulances =
                 ambulanceRepository.findAll();
 
 
-        // -----------------------------------------------------
-        // 4. Create PriorityQueue
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 4: PRIORITY QUEUE
+        // =====================================================
 
         PriorityQueue<AmbulanceDistance> priorityQueue =
                 new PriorityQueue<>(
                         Comparator.comparingDouble(
-                                AmbulanceDistance::distanceKm
+                                AmbulanceDistance::travelTimeMinutes
                         )
                 );
 
 
-        // -----------------------------------------------------
-        // 5. Calculate Dijkstra distance for AVAILABLE
-        //    ambulances
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 5: EVALUATE AVAILABLE AMBULANCES
+        // =====================================================
 
         for (Ambulance ambulance : ambulances) {
 
@@ -287,10 +290,12 @@ public class DispatchService {
             }
 
 
-            // Find nearest graph node to ambulance
+            // -------------------------------------------------
+            // Map ambulance GPS location to nearest OSM node.
+            // -------------------------------------------------
 
             GraphNode ambulanceNode =
-                    findNearestGraphNode(
+                    roadGraph.findNearestNode(
                             ambulance.getLatitude(),
                             ambulance.getLongitude()
                     );
@@ -299,34 +304,36 @@ public class DispatchService {
             try {
 
                 // -------------------------------------------------
-                // Run Dijkstra from ambulance → emergency
+                // Traffic-aware Dijkstra
+                //
+                // Ambulance → Emergency
                 // -------------------------------------------------
 
-                DijkstraResponse route =
-                        dijkstraService.findShortestPath(
-                                ambulanceNode.id(),
-                                emergencyNode.id()
-                        );
+                TrafficDijkstraResponse route =
+                        trafficAwareDijkstraService
+                                .findShortestPath(
+                                        ambulanceNode.id(),
+                                        emergencyNode.id()
+                                );
 
 
-                double distanceKm =
-                        route.distanceKm();
-
-
-                // Add to PriorityQueue
+                // -------------------------------------------------
+                // Add candidate to PriorityQueue.
+                // -------------------------------------------------
 
                 priorityQueue.offer(
                         new AmbulanceDistance(
                                 ambulance,
-                                distanceKm
+                                route.distanceKm(),
+                                route.estimatedTravelTimeMinutes(),
+                                route.trafficLevel()
                         )
                 );
-
 
             } catch (RuntimeException exception) {
 
                 System.out.println(
-                        "No route found for ambulance "
+                        "No traffic-aware route found for ambulance "
                                 + ambulance.getAmbulanceNumber()
                                 + ": "
                                 + exception.getMessage()
@@ -335,9 +342,9 @@ public class DispatchService {
         }
 
 
-        // -----------------------------------------------------
-        // 6. Check availability
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 6: CHECK AVAILABILITY
+        // =====================================================
 
         if (priorityQueue.isEmpty()) {
 
@@ -347,9 +354,9 @@ public class DispatchService {
         }
 
 
-        // -----------------------------------------------------
-        // 7. Select best ambulance
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 7: SELECT FASTEST AMBULANCE
+        // =====================================================
 
         AmbulanceDistance best =
                 priorityQueue.poll();
@@ -359,11 +366,13 @@ public class DispatchService {
                 best.ambulance();
 
 
-        // -----------------------------------------------------
-        // 8. Change ambulance status
+        // =====================================================
+        // STEP 8: CHANGE STATUS
+        // =====================================================
         //
         // AVAILABLE → EN_ROUTE
-        // -----------------------------------------------------
+        //
+        // =====================================================
 
         ambulance.setStatus(
                 "EN_ROUTE"
@@ -376,76 +385,17 @@ public class DispatchService {
                 );
 
 
-        // -----------------------------------------------------
-        // 9. Return dispatch result
-        // -----------------------------------------------------
+        // =====================================================
+        // STEP 9: RETURN COMPLETE RESULT
+        // =====================================================
 
         return createResponse(
                 emergency,
                 ambulance,
-                best.distanceKm()
+                best.distanceKm(),
+                best.travelTimeMinutes(),
+                best.trafficLevel()
         );
-    }
-
-
-    // =========================================================
-    // FIND NEAREST GRAPH NODE
-    // =========================================================
-    //
-    // Converts a real-world latitude/longitude location
-    // into the closest node in our Gurgaon road graph.
-    //
-    // =========================================================
-
-    private GraphNode findNearestGraphNode(
-
-            double latitude,
-
-            double longitude
-
-    ) {
-
-        GraphNode nearestNode = null;
-
-        double smallestDistance =
-                Double.POSITIVE_INFINITY;
-
-
-        for (GraphNode node :
-                roadGraph.getNodes().values()) {
-
-            double distance =
-                    calculateHaversineDistance(
-
-                            latitude,
-                            longitude,
-
-                            node.latitude(),
-                            node.longitude()
-
-                    );
-
-
-            if (distance < smallestDistance) {
-
-                smallestDistance =
-                        distance;
-
-                nearestNode =
-                        node;
-            }
-        }
-
-
-        if (nearestNode == null) {
-
-            throw new RuntimeException(
-                    "Unable to find nearest graph node"
-            );
-        }
-
-
-        return nearestNode;
     }
 
 
@@ -459,7 +409,11 @@ public class DispatchService {
 
             Ambulance ambulance,
 
-            double distanceKm
+            double distanceKm,
+
+            double travelTimeMinutes,
+
+            String trafficLevel
 
     ) {
 
@@ -477,102 +431,20 @@ public class DispatchService {
 
                 roundToTwoDecimals(
                         distanceKm
-                )
+                ),
+
+                roundToTwoDecimals(
+                        travelTimeMinutes
+                ),
+
+                trafficLevel
 
         );
     }
 
 
     // =========================================================
-    // HAVERSINE DISTANCE
-    // =========================================================
-    //
-    // Haversine is ONLY used to connect a real location
-    // to the nearest node in our graph.
-    //
-    // It is NOT used for route optimization.
-    //
-    // Actual route distance comes from Dijkstra.
-    //
-    // =========================================================
-
-    private double calculateHaversineDistance(
-
-            double latitude1,
-            double longitude1,
-
-            double latitude2,
-            double longitude2
-
-    ) {
-
-        final double EARTH_RADIUS_KM =
-                6371.0;
-
-
-        double lat1 =
-                Math.toRadians(
-                        latitude1
-                );
-
-        double lat2 =
-                Math.toRadians(
-                        latitude2
-                );
-
-
-        double deltaLatitude =
-                Math.toRadians(
-                        latitude2 - latitude1
-                );
-
-        double deltaLongitude =
-                Math.toRadians(
-                        longitude2 - longitude1
-                );
-
-
-        double a =
-
-                Math.sin(
-                        deltaLatitude / 2
-                )
-                        *
-                        Math.sin(
-                                deltaLatitude / 2
-                        )
-
-                        +
-
-                        Math.cos(lat1)
-                                *
-                                Math.cos(lat2)
-                                *
-                                Math.sin(
-                                        deltaLongitude / 2
-                                )
-                                *
-                                Math.sin(
-                                        deltaLongitude / 2
-                                );
-
-
-        double c =
-                2 * Math.atan2(
-
-                        Math.sqrt(a),
-
-                        Math.sqrt(1 - a)
-
-                );
-
-
-        return EARTH_RADIUS_KM * c;
-    }
-
-
-    // =========================================================
-    // ROUND DISTANCE
+    // ROUND VALUE
     // =========================================================
 
     private double roundToTwoDecimals(
@@ -593,7 +465,11 @@ public class DispatchService {
 
             Ambulance ambulance,
 
-            double distanceKm
+            double distanceKm,
+
+            double travelTimeMinutes,
+
+            String trafficLevel
 
     ) {
     }
