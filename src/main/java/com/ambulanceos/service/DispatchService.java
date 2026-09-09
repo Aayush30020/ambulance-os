@@ -3,14 +3,17 @@ package com.ambulanceos.service;
 import com.ambulanceos.dto.DispatchResponse;
 import com.ambulanceos.dto.TrafficDijkstraResponse;
 import com.ambulanceos.entity.Ambulance;
+import com.ambulanceos.entity.Dispatch;
 import com.ambulanceos.entity.Emergency;
 import com.ambulanceos.graph.GraphNode;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import com.ambulanceos.repository.AmbulanceRepository;
+import com.ambulanceos.repository.DispatchRepository;
 import com.ambulanceos.repository.EmergencyRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.PriorityQueue;
@@ -23,29 +26,39 @@ public class DispatchService {
 
     private final EmergencyRepository emergencyRepository;
 
+    private final DispatchRepository dispatchRepository;
+
     private final GurgaonRoadGraph roadGraph;
 
-    private final TrafficAwareDijkstraService
-            trafficAwareDijkstraService;
+    /*
+     * Central routing gateway.
+     *
+     * RoutingService automatically uses the algorithm selected
+     * in the system settings:
+     *
+     * DIJKSTRA
+     * or
+     * ASTAR
+     */
+    private final RoutingService routingService;
 
 
     // =========================================================
-    // FIND BEST AVAILABLE AMBULANCE
+    // FIND BEST AMBULANCE
     // =========================================================
     //
-    // Emergency
-    //      ↓
-    // AVAILABLE ambulances
-    //      ↓
-    // Nearest OSM nodes
-    //      ↓
-    // Traffic-aware Dijkstra
-    //      ↓
-    // Estimated travel time
-    //      ↓
-    // PriorityQueue
-    //      ↓
-    // Fastest ambulance
+    // Finds the fastest reachable AVAILABLE ambulance.
+    //
+    // Process:
+    //
+    // 1. Find emergency
+    // 2. Find nearest graph node
+    // 3. Get AVAILABLE ambulances
+    // 4. Calculate route for every ambulance
+    // 5. Store candidates in PriorityQueue
+    // 6. Select ambulance with minimum travel time
+    //
+    // RoutingService decides whether Dijkstra or A* is used.
     //
     // =========================================================
 
@@ -54,23 +67,22 @@ public class DispatchService {
     ) {
 
         // =====================================================
-        // STEP 1: FIND EMERGENCY
+        // 1. FIND EMERGENCY
         // =====================================================
 
         Emergency emergency =
                 emergencyRepository.findById(
-                                emergencyId
+                        emergencyId
+                ).orElseThrow(() ->
+                        new RuntimeException(
+                                "Emergency not found with id: "
+                                        + emergencyId
                         )
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Emergency not found with id: "
-                                                + emergencyId
-                                )
-                        );
+                );
 
 
         // =====================================================
-        // STEP 2: FIND NEAREST GRAPH NODE
+        // 2. FIND NEAREST GRAPH NODE FOR EMERGENCY
         // =====================================================
 
         GraphNode emergencyNode =
@@ -80,20 +92,45 @@ public class DispatchService {
                 );
 
 
+        if (emergencyNode == null) {
+
+            throw new RuntimeException(
+                    "Unable to find road node near emergency"
+            );
+        }
+
+
         // =====================================================
-        // STEP 3: GET ALL AMBULANCES
+        // 3. GET AVAILABLE AMBULANCES
         // =====================================================
 
-        List<Ambulance> ambulances =
-                ambulanceRepository.findAll();
+        List<Ambulance> availableAmbulances =
+                ambulanceRepository.findAll()
+                        .stream()
+                        .filter(ambulance ->
+                                "AVAILABLE".equalsIgnoreCase(
+                                        ambulance.getStatus()
+                                )
+                        )
+                        .toList();
+
+
+        if (availableAmbulances.isEmpty()) {
+
+            throw new RuntimeException(
+                    "No available ambulance found"
+            );
+        }
 
 
         // =====================================================
-        // STEP 4: PRIORITY QUEUE
+        // 4. PRIORITY QUEUE
         // =====================================================
         //
-        // Ambulance with the lowest traffic-adjusted
-        // travel time gets highest priority.
+        // Lower travel time = higher priority.
+        //
+        // PriorityQueue is the main DSA component used
+        // for ambulance selection.
         //
         // =====================================================
 
@@ -106,22 +143,11 @@ public class DispatchService {
 
 
         // =====================================================
-        // STEP 5: EVALUATE AVAILABLE AMBULANCES
+        // 5. CALCULATE ROUTE FOR EACH AMBULANCE
         // =====================================================
 
-        for (Ambulance ambulance : ambulances) {
-
-            if (!"AVAILABLE".equalsIgnoreCase(
-                    ambulance.getStatus()
-            )) {
-
-                continue;
-            }
-
-
-            // -------------------------------------------------
-            // Map ambulance GPS location to nearest OSM node.
-            // -------------------------------------------------
+        for (Ambulance ambulance :
+                availableAmbulances) {
 
             GraphNode ambulanceNode =
                     roadGraph.findNearestNode(
@@ -130,197 +156,36 @@ public class DispatchService {
                     );
 
 
+            if (ambulanceNode == null) {
+
+                System.out.println(
+                        "Unable to find road node for ambulance "
+                                + ambulance.getAmbulanceNumber()
+                );
+
+                continue;
+            }
+
+
             try {
 
                 // -------------------------------------------------
+                // RoutingService automatically selects:
+                //
                 // Traffic-aware Dijkstra
                 //
-                // Ambulance → Emergency
+                // OR
+                //
+                // A*
                 // -------------------------------------------------
 
                 TrafficDijkstraResponse route =
-                        trafficAwareDijkstraService
-                                .findShortestPath(
-                                        ambulanceNode.id(),
-                                        emergencyNode.id()
-                                );
-
-
-                // -------------------------------------------------
-                // Add ambulance candidate to PriorityQueue.
-                // -------------------------------------------------
-
-                priorityQueue.offer(
-                        new AmbulanceDistance(
-                                ambulance,
-                                route.distanceKm(),
-                                route.estimatedTravelTimeMinutes(),
-                                route.trafficLevel()
-                        )
-                );
-
-            } catch (RuntimeException exception) {
-
-                System.out.println(
-                        "No traffic-aware route found for ambulance "
-                                + ambulance.getAmbulanceNumber()
-                                + ": "
-                                + exception.getMessage()
-                );
-            }
-        }
-
-
-        // =====================================================
-        // STEP 6: CHECK REACHABLE AMBULANCES
-        // =====================================================
-
-        if (priorityQueue.isEmpty()) {
-
-            throw new RuntimeException(
-                    "No reachable available ambulance found"
-            );
-        }
-
-
-        // =====================================================
-        // STEP 7: SELECT FASTEST AMBULANCE
-        // =====================================================
-
-        AmbulanceDistance best =
-                priorityQueue.poll();
-
-
-        Ambulance ambulance =
-                best.ambulance();
-
-
-        // =====================================================
-        // STEP 8: RETURN RESULT
-        // =====================================================
-
-        return createResponse(
-                emergency,
-                ambulance,
-                best.distanceKm(),
-                best.travelTimeMinutes(),
-                best.trafficLevel()
-        );
-    }
-
-
-    // =========================================================
-    // DISPATCH AMBULANCE
-    // =========================================================
-    //
-    // AVAILABLE
-    //     ↓
-    // Traffic-aware Dijkstra
-    //     ↓
-    // PriorityQueue
-    //     ↓
-    // Fastest ambulance
-    //     ↓
-    // EN_ROUTE
-    //
-    // =========================================================
-
-    public DispatchResponse dispatchAmbulance(
-            Long emergencyId
-    ) {
-
-        // =====================================================
-        // STEP 1: FIND EMERGENCY
-        // =====================================================
-
-        Emergency emergency =
-                emergencyRepository.findById(
-                                emergencyId
-                        )
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Emergency not found with id: "
-                                                + emergencyId
-                                )
+                        routingService.findRoute(
+                                ambulanceNode.id(),
+                                emergencyNode.id()
                         );
 
 
-        // =====================================================
-        // STEP 2: FIND NEAREST GRAPH NODE
-        // =====================================================
-
-        GraphNode emergencyNode =
-                roadGraph.findNearestNode(
-                        emergency.getLatitude(),
-                        emergency.getLongitude()
-                );
-
-
-        // =====================================================
-        // STEP 3: GET ALL AMBULANCES
-        // =====================================================
-
-        List<Ambulance> ambulances =
-                ambulanceRepository.findAll();
-
-
-        // =====================================================
-        // STEP 4: PRIORITY QUEUE
-        // =====================================================
-
-        PriorityQueue<AmbulanceDistance> priorityQueue =
-                new PriorityQueue<>(
-                        Comparator.comparingDouble(
-                                AmbulanceDistance::travelTimeMinutes
-                        )
-                );
-
-
-        // =====================================================
-        // STEP 5: EVALUATE AVAILABLE AMBULANCES
-        // =====================================================
-
-        for (Ambulance ambulance : ambulances) {
-
-            if (!"AVAILABLE".equalsIgnoreCase(
-                    ambulance.getStatus()
-            )) {
-
-                continue;
-            }
-
-
-            // -------------------------------------------------
-            // Map ambulance GPS location to nearest OSM node.
-            // -------------------------------------------------
-
-            GraphNode ambulanceNode =
-                    roadGraph.findNearestNode(
-                            ambulance.getLatitude(),
-                            ambulance.getLongitude()
-                    );
-
-
-            try {
-
-                // -------------------------------------------------
-                // Traffic-aware Dijkstra
-                //
-                // Ambulance → Emergency
-                // -------------------------------------------------
-
-                TrafficDijkstraResponse route =
-                        trafficAwareDijkstraService
-                                .findShortestPath(
-                                        ambulanceNode.id(),
-                                        emergencyNode.id()
-                                );
-
-
-                // -------------------------------------------------
-                // Add candidate to PriorityQueue.
-                // -------------------------------------------------
-
                 priorityQueue.offer(
                         new AmbulanceDistance(
                                 ambulance,
@@ -330,10 +195,16 @@ public class DispatchService {
                         )
                 );
 
+
             } catch (RuntimeException exception) {
 
+                // -------------------------------------------------
+                // Ambulance may be present in the database but
+                // unreachable in the road graph.
+                // -------------------------------------------------
+
                 System.out.println(
-                        "No traffic-aware route found for ambulance "
+                        "No route found for ambulance "
                                 + ambulance.getAmbulanceNumber()
                                 + ": "
                                 + exception.getMessage()
@@ -343,7 +214,7 @@ public class DispatchService {
 
 
         // =====================================================
-        // STEP 6: CHECK AVAILABILITY
+        // 6. CHECK WHETHER ANY AMBULANCE IS REACHABLE
         // =====================================================
 
         if (priorityQueue.isEmpty()) {
@@ -355,67 +226,19 @@ public class DispatchService {
 
 
         // =====================================================
-        // STEP 7: SELECT FASTEST AMBULANCE
+        // 7. GET FASTEST AMBULANCE
         // =====================================================
 
         AmbulanceDistance best =
                 priorityQueue.poll();
-
 
         Ambulance ambulance =
                 best.ambulance();
 
 
         // =====================================================
-        // STEP 8: CHANGE STATUS
+        // 8. RETURN RESULT
         // =====================================================
-        //
-        // AVAILABLE → EN_ROUTE
-        //
-        // =====================================================
-
-        ambulance.setStatus(
-                "EN_ROUTE"
-        );
-
-
-        ambulance =
-                ambulanceRepository.save(
-                        ambulance
-                );
-
-
-        // =====================================================
-        // STEP 9: RETURN COMPLETE RESULT
-        // =====================================================
-
-        return createResponse(
-                emergency,
-                ambulance,
-                best.distanceKm(),
-                best.travelTimeMinutes(),
-                best.trafficLevel()
-        );
-    }
-
-
-    // =========================================================
-    // CREATE RESPONSE
-    // =========================================================
-
-    private DispatchResponse createResponse(
-
-            Emergency emergency,
-
-            Ambulance ambulance,
-
-            double distanceKm,
-
-            double travelTimeMinutes,
-
-            String trafficLevel
-
-    ) {
 
         return new DispatchResponse(
 
@@ -430,21 +253,226 @@ public class DispatchService {
                 ambulance.getStatus(),
 
                 roundToTwoDecimals(
-                        distanceKm
+                        best.distanceKm()
                 ),
 
                 roundToTwoDecimals(
-                        travelTimeMinutes
+                        best.travelTimeMinutes()
                 ),
 
-                trafficLevel
-
+                best.trafficLevel()
         );
     }
 
 
     // =========================================================
-    // ROUND VALUE
+    // DISPATCH AMBULANCE
+    // =========================================================
+    //
+    // Finds the best ambulance and changes:
+    //
+    // AVAILABLE
+    //      ↓
+    // EN_ROUTE
+    //
+    // Persistent Dispatch history is created by
+    // DispatchPlanService.
+    //
+    // =========================================================
+
+    public DispatchResponse dispatchAmbulance(
+            Long emergencyId
+    ) {
+
+        // -----------------------------------------------------
+        // Find best ambulance
+        // -----------------------------------------------------
+
+        DispatchResponse bestAmbulance =
+                findBestAmbulance(
+                        emergencyId
+                );
+
+
+        // -----------------------------------------------------
+        // Load ambulance from database
+        // -----------------------------------------------------
+
+        Ambulance ambulance =
+                ambulanceRepository.findById(
+                        bestAmbulance.ambulanceId()
+                ).orElseThrow(() ->
+                        new RuntimeException(
+                                "Selected ambulance not found"
+                        )
+                );
+
+
+        // -----------------------------------------------------
+        // Change status
+        //
+        // AVAILABLE → EN_ROUTE
+        // -----------------------------------------------------
+
+        ambulance.setStatus(
+                "EN_ROUTE"
+        );
+
+
+        // -----------------------------------------------------
+        // Save updated ambulance
+        // -----------------------------------------------------
+
+        Ambulance updatedAmbulance =
+                ambulanceRepository.save(
+                        ambulance
+                );
+
+
+        // -----------------------------------------------------
+        // Return updated response
+        // -----------------------------------------------------
+
+        return new DispatchResponse(
+
+                emergencyId,
+
+                updatedAmbulance.getId(),
+
+                updatedAmbulance.getAmbulanceNumber(),
+
+                updatedAmbulance.getType(),
+
+                updatedAmbulance.getStatus(),
+
+                bestAmbulance.distanceKm(),
+
+                bestAmbulance.estimatedTravelTimeMinutes(),
+
+                bestAmbulance.trafficLevel()
+        );
+    }
+
+
+    // =========================================================
+    // COMPLETE DISPATCH
+    // =========================================================
+    //
+    // Dispatch lifecycle:
+    //
+    // IN_PROGRESS
+    //       ↓
+    // COMPLETED
+    //
+    // completedAt is also stored.
+    //
+    // Ambulance lifecycle:
+    //
+    // EN_ROUTE
+    //       ↓
+    // AVAILABLE
+    //
+    // Once the dispatch is completed, the ambulance is
+    // automatically released and can handle another emergency.
+    //
+    // =========================================================
+
+    public Dispatch completeDispatch(
+            Long dispatchId
+    ) {
+
+        // =====================================================
+        // 1. FIND DISPATCH
+        // =====================================================
+
+        Dispatch dispatch =
+                dispatchRepository.findById(
+                        dispatchId
+                ).orElseThrow(() ->
+                        new RuntimeException(
+                                "Dispatch not found with id: "
+                                        + dispatchId
+                        )
+                );
+
+
+        // =====================================================
+        // 2. PREVENT DUPLICATE COMPLETION
+        // =====================================================
+
+        if ("COMPLETED".equalsIgnoreCase(
+                dispatch.getStatus()
+        )) {
+
+            return dispatch;
+        }
+
+
+        // =====================================================
+        // 3. UPDATE DISPATCH STATUS
+        // =====================================================
+
+        dispatch.setStatus(
+                "COMPLETED"
+        );
+
+
+        // =====================================================
+        // 4. STORE COMPLETION TIMESTAMP
+        // =====================================================
+
+        dispatch.setCompletedAt(
+                LocalDateTime.now()
+        );
+
+
+        // =====================================================
+        // 5. FIND AMBULANCE USED BY THIS DISPATCH
+        // =====================================================
+
+        Ambulance ambulance =
+                ambulanceRepository.findById(
+                        dispatch.getAmbulanceId()
+                ).orElseThrow(() ->
+                        new RuntimeException(
+                                "Ambulance not found for dispatch: "
+                                        + dispatchId
+                        )
+                );
+
+
+        // =====================================================
+        // 6. RELEASE AMBULANCE
+        //
+        // EN_ROUTE → AVAILABLE
+        // =====================================================
+
+        ambulance.setStatus(
+                "AVAILABLE"
+        );
+
+
+        // =====================================================
+        // 7. SAVE UPDATED AMBULANCE
+        // =====================================================
+
+        ambulanceRepository.save(
+                ambulance
+        );
+
+
+        // =====================================================
+        // 8. SAVE COMPLETED DISPATCH
+        // =====================================================
+
+        return dispatchRepository.save(
+                dispatch
+        );
+    }
+
+
+    // =========================================================
+    // ROUND NUMBER
     // =========================================================
 
     private double roundToTwoDecimals(

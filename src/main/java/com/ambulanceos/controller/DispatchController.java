@@ -16,6 +16,15 @@ public class DispatchController {
     // =========================================================
     // FIND BEST AMBULANCE
     // =========================================================
+    //
+    // GET
+    // /api/dispatch/ambulance/{emergencyId}
+    //
+    // Does NOT change ambulance status.
+    //
+    // It only calculates which AVAILABLE ambulance is best.
+    //
+    // =========================================================
 
     @GetMapping("/ambulance/{emergencyId}")
     public DispatchResponse findBestAmbulance(
@@ -30,6 +39,15 @@ public class DispatchController {
 
     // =========================================================
     // DISPATCH AMBULANCE
+    // =========================================================
+    //
+    // POST
+    // /api/dispatch/{emergencyId}
+    //
+    // Finds the best ambulance and changes:
+    //
+    // AVAILABLE → EN_ROUTE
+    //
     // =========================================================
 
     @PostMapping("/{emergencyId}")
