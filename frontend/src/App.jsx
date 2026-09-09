@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 
 import {
@@ -6,6 +6,7 @@ import {
   Ambulance,
   Bell,
   Clock3,
+  ClipboardList,
   Hospital,
   MapPin,
   Navigation,
@@ -31,10 +32,15 @@ import "leaflet/dist/leaflet.css";
 import LocationPicker from "./components/LocationPicker";
 
 import { getAllHospitals } from "./services/hospitalService";
+import AlgorithmAnalytics from "./components/AlgorithmAnalytics";
 
 import {
   createDispatchPlan,
 } from "./services/dispatchPlanService";
+
+import {
+  completeDispatch,
+} from "./services/dispatchHistoryService";
 
 
 // =========================================================
@@ -224,8 +230,39 @@ function ManagementPage({
                           ambulances,
                           hospitals,
                           dispatchPlan,
+                          tripPhase,
                           onDispatch,
+                          loadingDispatch,
+                          errorMessage,
                         }) {
+
+  const [dispatchHistory, setDispatchHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+
+  const loadDispatchHistory = async () => {
+    try {
+      setLoadingHistory(true);
+      setHistoryError("");
+
+      const response = await axios.get(
+          `${API_URL}/dispatches`
+      );
+
+      setDispatchHistory(response.data || []);
+    } catch (error) {
+      console.error("Failed to load dispatch history:", error);
+      setHistoryError("Unable to load dispatch history from the backend.");
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    if (page === "History") {
+      loadDispatchHistory();
+    }
+  }, [page]);
 
   const activeEmergencies = emergencies.filter(
       (emergency) =>
@@ -249,6 +286,27 @@ function ManagementPage({
       activeEmergencies.length > 0
           ? activeEmergencies[0]
           : null;
+
+  // Always display the live ambulance status from the
+  // database-backed ambulance list. dispatchPlan contains the
+  // initial status returned when the dispatch was created, so it
+  // must not be used as the source of truth after the journey moves.
+  const currentDispatchAmbulance =
+      dispatchPlan
+          ? ambulances.find(
+              (ambulance) =>
+                  ambulance.id ===
+                  dispatchPlan.ambulance.id
+          )
+          : null;
+
+  // tripPhase is the live frontend simulation phase. The backend
+  // dispatchPlan.trip.status is only the initial TO_EMERGENCY
+  // value and is intentionally not mutated during the animation.
+  const currentTripPhase =
+      tripPhase ||
+      dispatchPlan?.trip?.status ||
+      null;
 
   const pageConfig = {
     Emergencies: {
@@ -275,6 +333,10 @@ function ManagementPage({
       title: "Analytics",
       subtitle: "Operational statistics from the current simulation",
     },
+    History: {
+      title: "Dispatch History",
+      subtitle: "Review completed and in-progress ambulance operations",
+    },
     Settings: {
       title: "Settings",
       subtitle: "AmbulanceOS simulation configuration",
@@ -291,6 +353,7 @@ function ManagementPage({
     [Route, "Routes"],
     [Navigation, "Dispatch"],
     [Activity, "Analytics"],
+    [ClipboardList, "History"],
     [Settings, "Settings"],
   ];
 
@@ -519,58 +582,377 @@ function ManagementPage({
 
             {page === "Dispatch" && (
                 <div className="space-y-5">
+
+                  {errorMessage && (
+                      <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
+                        {errorMessage}
+                      </div>
+                  )}
+
                   {latestActiveEmergency && !dispatchPlan && (
                       <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-5">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div>
-                            <p className="text-xs text-red-400">ACTIVE EMERGENCY</p>
-                            <h3 className="font-semibold mt-1">EM-{String(latestActiveEmergency.id).padStart(4, "0")} · {latestActiveEmergency.location}</h3>
-                            <p className="text-sm text-slate-500 mt-1">{latestActiveEmergency.priority} · {latestActiveEmergency.facility}</p>
+                            <p className="text-xs font-semibold uppercase tracking-wider text-red-400">
+                              Active Emergency Ready for Dispatch
+                            </p>
+                            <h3 className="font-semibold mt-1">
+                              EM-{String(latestActiveEmergency.id).padStart(4, "0")} · {latestActiveEmergency.location}
+                            </h3>
+                            <p className="text-sm text-slate-500 mt-1">
+                              {latestActiveEmergency.priority} · {latestActiveEmergency.facility}
+                            </p>
                           </div>
-                          <button onClick={() => onDispatch(latestActiveEmergency.id)} className="bg-red-500 hover:bg-red-600 px-5 py-2.5 rounded-xl font-semibold text-sm">
-                            Dispatch Ambulance
+
+                          <button
+                              onClick={() => onDispatch(latestActiveEmergency.id)}
+                              disabled={loadingDispatch}
+                              className="bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed px-5 py-2.5 rounded-xl font-semibold text-sm"
+                          >
+                            {loadingDispatch ? "Creating Dispatch..." : "Dispatch Ambulance"}
                           </button>
                         </div>
                       </div>
                   )}
 
-                  {dispatchPlan ? (
-                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                        <div className="flex items-center justify-between">
-                          <div><h3 className="text-lg font-semibold">Current Dispatch</h3><p className="text-sm text-slate-500 mt-1">Priority Queue + Traffic-Aware Dijkstra</p></div>
-                          <span className="text-green-400 text-xs font-semibold">{dispatchPlan.ambulance.status}</span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
-                          <div className="bg-slate-950 rounded-xl p-4"><p className="text-xs text-slate-500">Ambulance</p><p className="font-semibold mt-1">{dispatchPlan.ambulance.ambulanceNumber}</p><p className="text-xs text-slate-500 mt-1">{dispatchPlan.ambulance.estimatedTravelTimeMinutes.toFixed(2)} min to emergency</p></div>
-                          <div className="bg-slate-950 rounded-xl p-4"><p className="text-xs text-slate-500">Hospital</p><p className="font-semibold mt-1">{dispatchPlan.hospital.name}</p><p className="text-xs text-slate-500 mt-1">{dispatchPlan.hospital.availableBeds} beds</p></div>
-                          <div className="bg-slate-950 rounded-xl p-4"><p className="text-xs text-slate-500">Traffic</p><p className="font-semibold mt-1">{dispatchPlan.ambulance.trafficLevel}</p><p className="text-xs text-slate-500 mt-1">{dispatchPlan.ambulance.estimatedTravelTimeMinutes.toFixed(2)} min ETA</p></div>
+                  {loadingDispatch && (
+                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center">
+                        <div className="inline-flex items-center gap-3 text-sm text-slate-300">
+                          <Activity size={18} className="text-red-400 animate-pulse" />
+                          Calculating ambulance, hospital and traffic-aware route...
                         </div>
                       </div>
+                  )}
+
+                  {dispatchPlan ? (
+                      <>
+                        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-wider text-red-400">
+                                Dispatch Plan Generated
+                              </p>
+                              <h3 className="text-lg font-semibold mt-1">
+                                Emergency #{dispatchPlan.emergencyId}
+                              </h3>
+                              <p className="text-sm text-slate-500 mt-1">
+                                Priority Queue + Traffic-Aware Dijkstra
+                              </p>
+                            </div>
+
+                            <span className={`px-3 py-1.5 rounded-full text-xs font-semibold ${
+                                (currentDispatchAmbulance?.status || dispatchPlan.ambulance.status) === "AVAILABLE"
+                                    ? "bg-green-500/10 text-green-400"
+                                    : "bg-cyan-500/10 text-cyan-400"
+                            }`}>
+                          {currentDispatchAmbulance?.status || dispatchPlan.ambulance.status}
+                        </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                            <div className="bg-slate-950 rounded-xl p-4">
+                              <p className="text-xs text-slate-500">Selected Ambulance</p>
+                              <p className="font-semibold mt-1">{dispatchPlan.ambulance.ambulanceNumber}</p>
+                              <p className="text-xs text-slate-500 mt-1">
+                                {dispatchPlan.ambulance.type} · {Number(dispatchPlan.ambulance.distanceKm).toFixed(2)} km to emergency
+                              </p>
+                            </div>
+
+                            <div className="bg-slate-950 rounded-xl p-4">
+                              <p className="text-xs text-slate-500">Destination Hospital</p>
+                              <p className="font-semibold mt-1">{dispatchPlan.hospital.name}</p>
+                              <p className="text-xs text-slate-500 mt-1">
+                                {dispatchPlan.hospital.facilityType} · {dispatchPlan.hospital.availableBeds} beds
+                              </p>
+                            </div>
+
+                            <div className="bg-slate-950 rounded-xl p-4">
+                              <p className="text-xs text-slate-500">Ambulance ETA</p>
+                              <p className="font-semibold mt-1">
+                                {Number(dispatchPlan.ambulance.estimatedTravelTimeMinutes).toFixed(2)} min
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1">
+                                Traffic: {dispatchPlan.ambulance.trafficLevel}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center">
+                                <Navigation size={19} className="text-red-400" />
+                              </div>
+                              <div>
+                                <h3 className="font-semibold">Ambulance → Emergency</h3>
+                                <p className="text-xs text-slate-500 mt-1">First trip segment</p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-3 mt-5">
+                              <div className="bg-slate-950 rounded-xl p-3">
+                                <p className="text-[10px] text-slate-500">Distance</p>
+                                <p className="text-sm font-semibold mt-1">{Number(dispatchPlan.trip.routeToEmergency.distanceKm).toFixed(2)} km</p>
+                              </div>
+                              <div className="bg-slate-950 rounded-xl p-3">
+                                <p className="text-[10px] text-slate-500">ETA</p>
+                                <p className="text-sm font-semibold mt-1">{Number(dispatchPlan.trip.routeToEmergency.estimatedTravelTimeMinutes).toFixed(2)} min</p>
+                              </div>
+                              <div className="bg-slate-950 rounded-xl p-3">
+                                <p className="text-[10px] text-slate-500">Traffic</p>
+                                <p className="text-sm font-semibold mt-1">{dispatchPlan.trip.routeToEmergency.trafficLevel}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center">
+                                <Hospital size={19} className="text-green-400" />
+                              </div>
+                              <div>
+                                <h3 className="font-semibold">Emergency → Hospital</h3>
+                                <p className="text-xs text-slate-500 mt-1">Second trip segment</p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-3 mt-5">
+                              <div className="bg-slate-950 rounded-xl p-3">
+                                <p className="text-[10px] text-slate-500">Distance</p>
+                                <p className="text-sm font-semibold mt-1">{Number(dispatchPlan.trip.routeToHospital.distanceKm).toFixed(2)} km</p>
+                              </div>
+                              <div className="bg-slate-950 rounded-xl p-3">
+                                <p className="text-[10px] text-slate-500">ETA</p>
+                                <p className="text-sm font-semibold mt-1">{Number(dispatchPlan.trip.routeToHospital.estimatedTravelTimeMinutes).toFixed(2)} min</p>
+                              </div>
+                              <div className="bg-slate-950 rounded-xl p-3">
+                                <p className="text-[10px] text-slate-500">Traffic</p>
+                                <p className="text-sm font-semibold mt-1">{dispatchPlan.trip.routeToHospital.trafficLevel}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                            <div>
+                              <h3 className="font-semibold">Live Route Simulation</h3>
+                              <p className="text-sm text-slate-500 mt-1">
+                                The ambulance route is available on the Operations map.
+                              </p>
+                            </div>
+
+                            <button
+                                onClick={() => onNavigate("Operations")}
+                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-5 py-2.5 text-sm font-semibold text-slate-200 hover:border-red-500/40 hover:text-white"
+                            >
+                              <MapPin size={17} />
+                              Open Live Operations
+                            </button>
+                          </div>
+
+                          <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div className="rounded-xl bg-slate-950 p-4">
+                              <p className="text-xs text-slate-500">Current Phase</p>
+                              <p className={`text-sm font-semibold mt-1 ${
+                                  currentTripPhase === "COMPLETED"
+                                      ? "text-green-400"
+                                      : currentTripPhase === "AT_EMERGENCY"
+                                          ? "text-yellow-400"
+                                          : "text-cyan-400"
+                              }`}>
+                                {currentTripPhase
+                                    ? currentTripPhase.replaceAll("_", " ")
+                                    : "—"}
+                              </p>
+                            </div>
+                            <div className="rounded-xl bg-slate-950 p-4">
+                              <p className="text-xs text-slate-500">Total Route Nodes</p>
+                              <p className="text-sm font-semibold mt-1">
+                                {(dispatchPlan.trip.routeToEmergency.nodePath?.length || 0) + (dispatchPlan.trip.routeToHospital.nodePath?.length || 0) - 1}
+                              </p>
+                            </div>
+                            <div className="rounded-xl bg-slate-950 p-4">
+                              <p className="text-xs text-slate-500">Routing Engine</p>
+                              <p className="text-sm font-semibold mt-1">
+                                Traffic-Aware Dijkstra
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </>
                   ) : !latestActiveEmergency ? (
-                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center text-slate-500">No active emergency is waiting for dispatch.</div>
+                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center text-slate-500">
+                        No active emergency is waiting for dispatch.
+                      </div>
                   ) : null}
                 </div>
             )}
 
-            {page === "Analytics" && (
+            {page === "History" && (
                 <div className="space-y-5">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <StatCard icon={Siren} label="Total Emergencies" value={String(emergencies.length)} description="All database records" />
-                    <StatCard icon={Ambulance} label="Dispatch Ready" value={String(availableAmbulances.length)} description="Available ambulances" />
-                    <StatCard icon={Hospital} label="Hospital Beds" value={String(hospitals.reduce((sum, hospital) => sum + Number(hospital.availableBeds || 0), 0))} description="Simulated capacity" />
-                    <StatCard icon={Route} label="Completed" value={String(completedEmergencies.length)} description="Completed emergencies" />
-                  </div>
 
                   <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                    <h3 className="font-semibold">Operational Overview</h3>
-                    <div className="space-y-4 mt-5">
-                      <div className="flex justify-between text-sm"><span className="text-slate-400">Emergency completion rate</span><span>{emergencies.length ? Math.round((completedEmergencies.length / emergencies.length) * 100) : 0}%</span></div>
-                      <div className="h-2 bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-green-500" style={{ width: `${emergencies.length ? (completedEmergencies.length / emergencies.length) * 100 : 0}%` }} /></div>
-                      <div className="flex justify-between text-sm"><span className="text-slate-400">Ambulance availability</span><span>{ambulances.length ? Math.round((availableAmbulances.length / ambulances.length) * 100) : 0}%</span></div>
-                      <div className="h-2 bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-cyan-500" style={{ width: `${ambulances.length ? (availableAmbulances.length / ambulances.length) * 100 : 0}%` }} /></div>
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                      <div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center">
+                            <ClipboardList size={20} className="text-red-400" />
+                          </div>
+                          <div>
+                            <h3 className="text-lg font-semibold">Dispatch History</h3>
+                            <p className="text-sm text-slate-500 mt-1">
+                              Persistent ambulance operations stored in PostgreSQL
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                          onClick={loadDispatchHistory}
+                          disabled={loadingHistory}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-red-500/40 hover:text-white disabled:opacity-50"
+                      >
+                        <Activity size={17} className={loadingHistory ? "animate-pulse" : ""} />
+                        {loadingHistory ? "Refreshing..." : "Refresh"}
+                      </button>
                     </div>
                   </div>
+
+                  {historyError && (
+                      <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
+                        {historyError}
+                      </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <StatCard
+                        icon={ClipboardList}
+                        label="Total Dispatches"
+                        value={String(dispatchHistory.length).padStart(2, "0")}
+                        description="Recorded ambulance operations"
+                    />
+                    <StatCard
+                        icon={Activity}
+                        label="Completed"
+                        value={String(dispatchHistory.filter((dispatch) => dispatch.status === "COMPLETED").length).padStart(2, "0")}
+                        description="Successfully completed trips"
+                    />
+                    <StatCard
+                        icon={Navigation}
+                        label="In Progress"
+                        value={String(dispatchHistory.filter((dispatch) => dispatch.status === "IN_PROGRESS").length).padStart(2, "0")}
+                        description="Currently active dispatch records"
+                    />
+                  </div>
+
+                  {loadingHistory ? (
+                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center text-slate-400">
+                        Loading dispatch history...
+                      </div>
+                  ) : dispatchHistory.length === 0 ? (
+                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center">
+                        <ClipboardList size={34} className="mx-auto text-slate-600" />
+                        <p className="text-slate-300 font-medium mt-4">No dispatch history yet</p>
+                        <p className="text-sm text-slate-500 mt-1">Create a dispatch to generate the first history record.</p>
+                      </div>
+                  ) : (
+                      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-slate-950 text-xs uppercase tracking-wider text-slate-500">
+                            <tr>
+                              <th className="px-5 py-4">Dispatch</th>
+                              <th className="px-5 py-4">Emergency</th>
+                              <th className="px-5 py-4">Ambulance</th>
+                              <th className="px-5 py-4">Hospital</th>
+                              <th className="px-5 py-4">Distance</th>
+                              <th className="px-5 py-4">ETA</th>
+                              <th className="px-5 py-4">Status</th>
+                              <th className="px-5 py-4">Dispatched</th>
+                            </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800">
+                            {dispatchHistory.map((dispatch) => (
+                                <tr key={dispatch.id} className="hover:bg-slate-800/40">
+                                  <td className="px-5 py-4 font-semibold">
+                                    #{dispatch.id}
+                                  </td>
+                                  <td className="px-5 py-4 text-slate-300">
+                                    #{dispatch.emergencyId}
+                                  </td>
+                                  <td className="px-5 py-4">
+                                    <div className="font-medium">{dispatch.ambulanceNumber}</div>
+                                    <div className="text-xs text-slate-500 mt-1">
+                                      ID {dispatch.ambulanceId}
+                                    </div>
+                                  </td>
+                                  <td className="px-5 py-4">
+                                    <div className="font-medium">{dispatch.hospitalName}</div>
+                                    <div className="text-xs text-slate-500 mt-1">
+                                      Hospital ID {dispatch.hospitalId}
+                                    </div>
+                                  </td>
+                                  <td className="px-5 py-4 whitespace-nowrap">
+                                    {Number(dispatch.totalDistanceKm || 0).toFixed(2)} km
+                                  </td>
+                                  <td className="px-5 py-4 whitespace-nowrap">
+                                    {Number(dispatch.totalEstimatedTimeMinutes || 0).toFixed(2)} min
+                                  </td>
+                                  <td className="px-5 py-4">
+                                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                    dispatch.status === "COMPLETED"
+                                        ? "bg-green-500/10 text-green-400"
+                                        : dispatch.status === "IN_PROGRESS"
+                                            ? "bg-cyan-500/10 text-cyan-400"
+                                            : "bg-yellow-500/10 text-yellow-400"
+                                }`}>
+                                  {dispatch.status}
+                                </span>
+                                  </td>
+                                  <td className="px-5 py-4 whitespace-nowrap text-slate-400">
+                                    {dispatch.dispatchedAt
+                                        ? new Date(dispatch.dispatchedAt).toLocaleString()
+                                        : "—"}
+                                  </td>
+                                </tr>
+                            ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                  )}
+
+                  {dispatchHistory.length > 0 && (
+                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                          <div className="bg-slate-950 rounded-xl p-4">
+                            <p className="text-xs text-slate-500">Average Dispatch Distance</p>
+                            <p className="text-xl font-bold mt-1">
+                              {(dispatchHistory.reduce((sum, dispatch) => sum + Number(dispatch.totalDistanceKm || 0), 0) / dispatchHistory.length).toFixed(2)} km
+                            </p>
+                          </div>
+                          <div className="bg-slate-950 rounded-xl p-4">
+                            <p className="text-xs text-slate-500">Average Estimated Time</p>
+                            <p className="text-xl font-bold mt-1">
+                              {(dispatchHistory.reduce((sum, dispatch) => sum + Number(dispatch.totalEstimatedTimeMinutes || 0), 0) / dispatchHistory.length).toFixed(2)} min
+                            </p>
+                          </div>
+                          <div className="bg-slate-950 rounded-xl p-4">
+                            <p className="text-xs text-slate-500">Routing Algorithm</p>
+                            <p className="text-xl font-bold mt-1">
+                              Traffic Dijkstra
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                  )}
                 </div>
+            )}
+
+            {page === "Analytics" && (
+                <AlgorithmAnalytics />
             )}
 
             {page === "Settings" && (
@@ -861,6 +1243,50 @@ function App() {
       setLoadingAmbulances(false);
 
     }
+  };
+
+
+  // =========================================================
+  // UPDATE AMBULANCE STATUS WITH RETRY
+  // =========================================================
+  //
+  // Completion is an important state transition. If a single
+  // HTTP request is interrupted, retry it before giving up.
+  //
+  const updateAmbulanceStatusWithRetry = async (
+      ambulanceId,
+      status
+  ) => {
+
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+
+      try {
+
+        return await updateAmbulanceStatus(
+            ambulanceId,
+            status
+        );
+
+      } catch (error) {
+
+        lastError = error;
+
+        console.error(
+            `Ambulance status update attempt ${attempt} failed:`,
+            error
+        );
+
+        if (attempt < 3) {
+          await new Promise((resolve) =>
+              window.setTimeout(resolve, 500)
+          );
+        }
+      }
+    }
+
+    throw lastError;
   };
 
 
@@ -1414,8 +1840,22 @@ function App() {
 
 
   // =========================================================
-  // ANIMATE AMBULANCE ALONG OSM GRAPH ROUTE
+  // LIVE AMBULANCE JOURNEY
   // =========================================================
+  //
+  // The backend gives us the exact OSM graph coordinates for
+  // both trip legs. We animate the ambulance through those
+  // coordinates and synchronize operational status changes
+  // with the important journey milestones.
+  //
+  // Phase 1: EN_ROUTE      -> ambulance -> emergency
+  // Phase 2: AT_EMERGENCY  -> patient pickup pause
+  // Phase 3: TO_HOSPITAL   -> emergency -> hospital
+  // Phase 4: COMPLETED     -> arrival + reset ambulance
+  //
+  // =========================================================
+
+  const completedDispatchRef = useRef(null);
 
   useEffect(() => {
 
@@ -1427,50 +1867,116 @@ function App() {
       return;
     }
 
+    // A dispatch journey must run only once. Without this guard,
+    // changing dispatchPlan after completion can cause React's
+    // effect to start the same journey again from the beginning.
+    if (completedDispatchRef.current === dispatchPlan.emergencyId) {
+      return;
+    }
+
     let cancelled = false;
     const timers = [];
 
-    const sleep = (ms) =>
+    const sleep = (milliseconds) =>
         new Promise((resolve) => {
-          const timer =
-              window.setTimeout(resolve, ms);
+          const timer = window.setTimeout(
+              resolve,
+              milliseconds
+          );
+
           timers.push(timer);
         });
 
-    const animateSegment =
-        async (coordinates, phase, routeData) => {
 
-          setTripPhase(phase);
-          setAnimationRunning(true);
+    // ---------------------------------------------------------
+    // Smoothly move between two consecutive OSM graph points.
+    // ---------------------------------------------------------
+    //
+    // The graph contains road vertices, so simply jumping from
+    // vertex to vertex can look slightly abrupt. We interpolate
+    // a few positions between each pair while still following
+    // the exact graph route.
+    //
+    const animateSegment = async (
+        coordinates,
+        phase,
+        routeData
+    ) => {
 
-          setTrafficData({
-            trafficLevel:
-            routeData.trafficLevel,
-            estimatedTravelTimeMinutes:
-            routeData.estimatedTravelTimeMinutes,
-            distanceKm:
-            routeData.distanceKm,
-          });
+      setTripPhase(phase);
+      setAnimationRunning(true);
 
-          for (
-              let index = 0;
-              index < coordinates.length;
-              index++
-          ) {
+      setTrafficData({
+        trafficLevel:
+        routeData.trafficLevel,
+        estimatedTravelTimeMinutes:
+        routeData.estimatedTravelTimeMinutes,
+        distanceKm:
+        routeData.distanceKm,
+      });
 
-            if (cancelled) {
-              return;
-            }
+      // Keep the animation quick enough for a dashboard demo
+      // while making movement visually smoother.
+      const interpolationSteps = 3;
+      const frameDelay = 15;
 
-            setMovingAmbulancePosition(
-                coordinates[index]
-            );
+      for (
+          let index = 0;
+          index < coordinates.length - 1;
+          index++
+      ) {
 
-            await sleep(45);
+        if (cancelled) {
+          return;
+        }
+
+        const start = coordinates[index];
+        const end = coordinates[index + 1];
+
+        for (
+            let step = 0;
+            step <= interpolationSteps;
+            step++
+        ) {
+
+          if (cancelled) {
+            return;
           }
-        };
+
+          const progress =
+              step / interpolationSteps;
+
+          const latitude =
+              start[0] +
+              (end[0] - start[0]) * progress;
+
+          const longitude =
+              start[1] +
+              (end[1] - start[1]) * progress;
+
+          setMovingAmbulancePosition([
+            latitude,
+            longitude,
+          ]);
+
+          await sleep(frameDelay);
+        }
+      }
+
+      // Guarantee the final coordinate is exact.
+      if (!cancelled) {
+        setMovingAmbulancePosition(
+            coordinates[coordinates.length - 1]
+        );
+      }
+    };
+
 
     const runJourney = async () => {
+
+      // =======================================================
+      // PHASE 1 — AMBULANCE TO EMERGENCY
+      // =======================================================
 
       await animateSegment(
           routeToEmergencyCoordinates,
@@ -1482,7 +1988,11 @@ function App() {
         return;
       }
 
-      // Patient pickup pause.
+
+      // =======================================================
+      // PHASE 2 — PATIENT PICKUP
+      // =======================================================
+
       setTripPhase("AT_EMERGENCY");
 
       setMovingAmbulancePosition(
@@ -1491,6 +2001,7 @@ function App() {
               ]
       );
 
+      // Synchronize backend operational state.
       await updateAmbulanceStatus(
           dispatchPlan.ambulance.id,
           "AT_EMERGENCY"
@@ -1501,11 +2012,21 @@ function App() {
           "RESPONDING"
       );
 
+      if (cancelled) {
+        return;
+      }
+
+      // Simulated patient loading / pickup delay.
       await sleep(1200);
 
       if (cancelled) {
         return;
       }
+
+
+      // =======================================================
+      // PHASE 3 — EMERGENCY TO HOSPITAL
+      // =======================================================
 
       await updateAmbulanceStatus(
           dispatchPlan.ambulance.id,
@@ -1522,6 +2043,11 @@ function App() {
         return;
       }
 
+
+      // =======================================================
+      // PHASE 4 — HOSPITAL ARRIVAL
+      // =======================================================
+
       setTripPhase("COMPLETED");
 
       setMovingAmbulancePosition(
@@ -1530,26 +2056,99 @@ function App() {
               ]
       );
 
-      await updateEmergencyStatus(
-          dispatchPlan.emergencyId,
-          "COMPLETED"
-      );
-
-      await updateAmbulanceStatus(
+      // =======================================================
+      // 4A. MARK AMBULANCE AVAILABLE
+      // =======================================================
+      //
+      // The ambulance must be released immediately after it
+      // reaches the hospital so it can be selected again.
+      //
+      // We do this independently from emergency completion.
+      // If the emergency status request fails, the ambulance
+      // should still be released.
+      //
+      await updateAmbulanceStatusWithRetry(
           dispatchPlan.ambulance.id,
           "AVAILABLE"
       );
 
+
+      // =======================================================
+      // 4B. COMPLETE DISPATCH HISTORY
+      // =======================================================
+      //
+      // The backend created a persistent dispatch record when
+      // this journey started. Now that the ambulance has reached
+      // the hospital, mark that exact dispatch as COMPLETED.
+      //
+      if (dispatchPlan.dispatchId) {
+
+        try {
+
+          await completeDispatch(
+              dispatchPlan.dispatchId
+          );
+
+        } catch (error) {
+
+          // Do not restart or interrupt the map animation if the
+          // history request fails. The ambulance has already been
+          // released and the journey itself is complete.
+          console.error(
+              "Failed to complete dispatch history:",
+              error
+          );
+        }
+      }
+
+
+      // =======================================================
+      // 4C. MARK EMERGENCY COMPLETED
+      // =======================================================
+
+      try {
+        await updateEmergencyStatus(
+            dispatchPlan.emergencyId,
+            "COMPLETED"
+        );
+      } catch (error) {
+        // The ambulance has already been released, so an
+        // emergency-status failure must not leave it EN_ROUTE.
+        console.error(
+            "Emergency completion update failed:",
+            error
+        );
+      }
+
+
+      // =======================================================
+      // 4D. REFRESH DATABASE-BACKED STATE
+      // =======================================================
+
       await loadAmbulances();
       await loadEmergencies();
 
-      setAnimationRunning(false);
+      // Permanently mark this dispatch journey as completed for
+      // this mounted Operations screen. A later render or state
+      // refresh cannot restart the ambulance from its base.
+      if (!cancelled) {
+        completedDispatchRef.current = dispatchPlan.emergencyId;
+        setAnimationRunning(false);
+      }
     };
+
 
     runJourney();
 
+
+    // ---------------------------------------------------------
+    // Cleanup when the route is cleared or a new dispatch starts.
+    // ---------------------------------------------------------
+
     return () => {
+
       cancelled = true;
+
       timers.forEach(
           (timer) =>
               window.clearTimeout(timer)
@@ -1568,6 +2167,8 @@ function App() {
   // =========================================================
 
   const clearRoute = () => {
+
+    completedDispatchRef.current = null;
 
     setDispatchPlan(null);
 
@@ -1629,7 +2230,10 @@ function App() {
             ambulances={ambulances}
             hospitals={hospitals}
             dispatchPlan={dispatchPlan}
+            tripPhase={tripPhase}
             onDispatch={handleViewOptimizedRoute}
+            loadingDispatch={loadingDispatch}
+            errorMessage={errorMessage}
         />
     );
   }
