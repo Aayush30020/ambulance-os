@@ -25,8 +25,13 @@ public class HospitalSelectionService {
 
     private final GurgaonRoadGraph roadGraph;
 
-    private final TrafficAwareDijkstraService
-            trafficAwareDijkstraService;
+    /*
+     * Central routing service.
+     *
+     * This automatically uses whichever routing algorithm
+     * is currently selected in Settings.
+     */
+    private final RoutingService routingService;
 
 
     // =========================================================
@@ -41,20 +46,20 @@ public class HospitalSelectionService {
     //     ↓
     // Hospitals with available beds
     //     ↓
-    // Find nearest OSM road node
+    // Nearest OSM node
     //     ↓
-    // Traffic-Aware Dijkstra
+    // RoutingService
     //     ↓
-    // Calculate travel time
+    // Dijkstra OR A*
     //     ↓
     // PriorityQueue
     //     ↓
     // Fastest suitable hospital
     //
-    // Primary priority:
+    // Primary:
     //     Lowest traffic-adjusted travel time
     //
-    // Secondary priority:
+    // Secondary:
     //     More available beds
     //
     // =========================================================
@@ -63,25 +68,24 @@ public class HospitalSelectionService {
             Long emergencyId
     ) {
 
-        // -----------------------------------------------------
-        // 1. Find emergency
-        // -----------------------------------------------------
+        // =====================================================
+        // 1. FIND EMERGENCY
+        // =====================================================
 
         Emergency emergency =
                 emergencyRepository.findById(
-                                emergencyId
+                        emergencyId
+                ).orElseThrow(() ->
+                        new RuntimeException(
+                                "Emergency not found with id: "
+                                        + emergencyId
                         )
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Emergency not found with id: "
-                                                + emergencyId
-                                )
-                        );
+                );
 
 
-        // -----------------------------------------------------
-        // 2. Find nearest REAL OSM node to emergency
-        // -----------------------------------------------------
+        // =====================================================
+        // 2. FIND EMERGENCY GRAPH NODE
+        // =====================================================
 
         GraphNode emergencyNode =
                 roadGraph.findNearestNode(
@@ -98,9 +102,9 @@ public class HospitalSelectionService {
         }
 
 
-        // -----------------------------------------------------
-        // 3. Get all hospitals
-        // -----------------------------------------------------
+        // =====================================================
+        // 3. GET ALL HOSPITALS
+        // =====================================================
 
         List<Hospital> hospitals =
                 hospitalRepository.findAll();
@@ -111,7 +115,7 @@ public class HospitalSelectionService {
         // =====================================================
         //
         // Primary:
-        //     Lowest estimated travel time
+        //     Lowest travel time
         //
         // Secondary:
         //     More available beds
@@ -138,10 +142,8 @@ public class HospitalSelectionService {
         // 5. CHECK EVERY HOSPITAL
         // =====================================================
 
-        for (
-                Hospital hospital :
-                hospitals
-        ) {
+        for (Hospital hospital :
+                hospitals) {
 
             // -------------------------------------------------
             // 5A. Hospital must have available beds.
@@ -172,7 +174,7 @@ public class HospitalSelectionService {
 
 
             // -------------------------------------------------
-            // 5C. Find nearest REAL OSM node to hospital.
+            // 5C. Find nearest OSM node to hospital.
             // -------------------------------------------------
 
             GraphNode hospitalNode =
@@ -195,29 +197,30 @@ public class HospitalSelectionService {
 
             try {
 
-                // -------------------------------------------------
-                // 5D. Run Traffic-Aware Dijkstra
+                // =================================================
+                // 5D. ROUTE EMERGENCY → HOSPITAL
+                // =================================================
                 //
-                // Emergency
-                //      ↓
-                // Traffic-Aware Dijkstra
-                //      ↓
-                // Hospital
+                // RoutingService reads the current algorithm
+                // from PostgreSQL.
                 //
-                // The route is optimized using traffic-adjusted
-                // cost.
-                // -------------------------------------------------
+                // DIJKSTRA:
+                //     Traffic-aware Dijkstra
+                //
+                // ASTAR:
+                //     A*
+                //
+                // =================================================
 
                 TrafficDijkstraResponse route =
-                        trafficAwareDijkstraService
-                                .findShortestPath(
-                                        emergencyNode.id(),
-                                        hospitalNode.id()
-                                );
+                        routingService.findRoute(
+                                emergencyNode.id(),
+                                hospitalNode.id()
+                        );
 
 
                 // -------------------------------------------------
-                // 5E. Add hospital to PriorityQueue
+                // 5E. ADD HOSPITAL TO PRIORITY QUEUE
                 // -------------------------------------------------
 
                 priorityQueue.offer(
@@ -233,12 +236,11 @@ public class HospitalSelectionService {
             } catch (RuntimeException exception) {
 
                 // -------------------------------------------------
-                // If no route exists between the emergency and
-                // hospital, skip this hospital.
+                // Skip unreachable hospitals.
                 // -------------------------------------------------
 
                 System.out.println(
-                        "No traffic-aware route found for hospital "
+                        "No route found for hospital "
                                 + hospital.getHospitalCode()
                                 + ": "
                                 + exception.getMessage()
@@ -248,12 +250,10 @@ public class HospitalSelectionService {
 
 
         // =====================================================
-        // 6. CHECK WHETHER A SUITABLE HOSPITAL EXISTS
+        // 6. CHECK WHETHER SUITABLE HOSPITAL EXISTS
         // =====================================================
 
-        if (
-                priorityQueue.isEmpty()
-        ) {
+        if (priorityQueue.isEmpty()) {
 
             throw new RuntimeException(
                     "No reachable hospital found with required "
@@ -264,13 +264,6 @@ public class HospitalSelectionService {
 
         // =====================================================
         // 7. SELECT BEST HOSPITAL
-        // =====================================================
-        //
-        // PriorityQueue gives us:
-        //
-        // 1. Lowest traffic-adjusted travel time
-        // 2. More available beds when travel time is equal
-        //
         // =====================================================
 
         HospitalDistance best =
@@ -354,20 +347,6 @@ public class HospitalSelectionService {
         // =====================================================
         // 9. RETURN RESPONSE
         // =====================================================
-        //
-        // Existing HospitalSelectionResponse contains:
-        //
-        // emergencyId
-        // hospitalId
-        // hospitalCode
-        // hospitalName
-        // facilityType
-        // availableBeds
-        // distanceKm
-        // estimatedTravelTimeMinutes
-        // trafficLevel
-        //
-        // =====================================================
 
         return new HospitalSelectionResponse(
 
@@ -399,14 +378,6 @@ public class HospitalSelectionService {
     // =========================================================
     // FACILITY MATCHING
     // =========================================================
-    //
-    // TRAUMA emergency → TRAUMA hospital
-    //
-    // ICU emergency → ICU hospital
-    //
-    // GENERAL emergency → Any hospital
-    //
-    // =========================================================
 
     private boolean facilityMatches(
 
@@ -429,7 +400,7 @@ public class HospitalSelectionService {
 
 
         // -----------------------------------------------------
-        // GENERAL emergency can be handled by any hospital.
+        // GENERAL emergency can use any hospital.
         // -----------------------------------------------------
 
         if (
@@ -443,7 +414,7 @@ public class HospitalSelectionService {
 
 
         // -----------------------------------------------------
-        // Hospital must have a valid facility type.
+        // Hospital must have a facility type.
         // -----------------------------------------------------
 
         if (
@@ -481,15 +452,6 @@ public class HospitalSelectionService {
 
     // =========================================================
     // PRIORITY QUEUE ELEMENT
-    // =========================================================
-    //
-    // Stores:
-    //
-    // Hospital
-    // Distance
-    // Travel time
-    // Traffic level
-    //
     // =========================================================
 
     private record HospitalDistance(

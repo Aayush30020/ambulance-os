@@ -24,12 +24,25 @@ public class RouteService {
 
     private final GurgaonRoadGraph roadGraph;
 
-    private final TrafficAwareDijkstraService
-            trafficAwareDijkstraService;
+    /*
+     * Central routing gateway.
+     *
+     * RoutingService reads the currently selected algorithm
+     * from PostgreSQL.
+     *
+     * Therefore this route can use:
+     *
+     *      DIJKSTRA
+     *
+     * or
+     *
+     *      ASTAR
+     */
+    private final RoutingService routingService;
 
 
     // =========================================================
-    // FIND TRAFFIC-AWARE AMBULANCE → HOSPITAL ROUTE
+    // FIND AMBULANCE → HOSPITAL ROUTE
     // =========================================================
     //
     // Flow:
@@ -38,11 +51,11 @@ public class RouteService {
     //      ↓
     // Find nearest OSM road node
     //      ↓
-    // Traffic-Aware Dijkstra
+    // RoutingService
+    //      ↓
+    // Selected algorithm
     //      ↓
     // Hospital
-    //      ↓
-    // Traffic-optimized path
     //      ↓
     // Convert OSM nodes to coordinates
     //      ↓
@@ -129,32 +142,31 @@ public class RouteService {
 
 
         // =====================================================
-        // 5. RUN TRAFFIC-AWARE DIJKSTRA
+        // 5. RUN SELECTED ROUTING ALGORITHM
         // =====================================================
         //
-        // Instead of normal Dijkstra:
+        // RoutingService automatically reads the current
+        // algorithm from the system settings.
         //
-        //     distance only
+        // If setting is:
         //
-        // we now use:
+        //      DIJKSTRA
         //
-        //     traffic-adjusted route cost
+        // Traffic-aware Dijkstra is used.
         //
-        // The TrafficAwareDijkstraService returns:
+        // If setting is:
         //
-        //     physical distance
-        //     estimated travel time
-        //     traffic level
-        //     optimized node path
+        //      ASTAR
+        //
+        // A* is used.
         //
         // =====================================================
 
         TrafficDijkstraResponse trafficRoute =
-                trafficAwareDijkstraService
-                        .findShortestPath(
-                                sourceNode.id(),
-                                destinationNode.id()
-                        );
+                routingService.findRoute(
+                        sourceNode.id(),
+                        destinationNode.id()
+                );
 
 
         // =====================================================
@@ -169,9 +181,9 @@ public class RouteService {
         // 7. CONVERT GRAPH NODES TO LATITUDE/LONGITUDE
         // =====================================================
         //
-        // Leaflet needs:
+        // Leaflet requires:
         //
-        //     [latitude, longitude]
+        //      [latitude, longitude]
         //
         // for every point in the route.
         //
@@ -214,7 +226,15 @@ public class RouteService {
 
 
         // =====================================================
-        // 8. LOG ROUTE INFORMATION
+        // 8. GET ACTUAL SELECTED ALGORITHM
+        // =====================================================
+
+        RoutingAlgorithm selectedAlgorithm =
+                routingService.getCurrentAlgorithm();
+
+
+        // =====================================================
+        // 9. LOG ROUTE INFORMATION
         // =====================================================
 
         System.out.println();
@@ -224,7 +244,7 @@ public class RouteService {
         );
 
         System.out.println(
-                " Traffic-Aware Ambulance → Hospital Route"
+                " Ambulance → Hospital Route"
         );
 
         System.out.println(
@@ -275,7 +295,8 @@ public class RouteService {
         );
 
         System.out.println(
-                "Algorithm: Traffic-Aware Dijkstra"
+                "Algorithm: "
+                        + selectedAlgorithm
         );
 
         System.out.println(
@@ -286,7 +307,7 @@ public class RouteService {
 
 
         // =====================================================
-        // 9. RETURN COMPLETE ROUTE
+        // 10. RETURN COMPLETE ROUTE
         // =====================================================
 
         return new RouteResponse(

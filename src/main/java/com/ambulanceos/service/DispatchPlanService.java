@@ -4,18 +4,22 @@ import com.ambulanceos.dto.DispatchPlanResponse;
 import com.ambulanceos.dto.DispatchResponse;
 import com.ambulanceos.dto.HospitalSelectionResponse;
 import com.ambulanceos.dto.TripRoute;
+import com.ambulanceos.dto.TrafficDijkstraResponse;
 import com.ambulanceos.entity.Ambulance;
+import com.ambulanceos.entity.Dispatch;
 import com.ambulanceos.entity.Emergency;
 import com.ambulanceos.entity.Hospital;
 import com.ambulanceos.graph.GraphNode;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import com.ambulanceos.repository.AmbulanceRepository;
+import com.ambulanceos.repository.DispatchRepository;
 import com.ambulanceos.repository.EmergencyRepository;
 import com.ambulanceos.repository.HospitalRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,6 +33,8 @@ public class DispatchPlanService {
 
     private final HospitalRepository hospitalRepository;
 
+    private final DispatchRepository dispatchRepository;
+
     private final DispatchService dispatchService;
 
     private final HospitalSelectionService hospitalSelectionService;
@@ -37,28 +43,27 @@ public class DispatchPlanService {
 
     private final GurgaonRoadGraph roadGraph;
 
-    private final TrafficAwareDijkstraService
-            trafficAwareDijkstraService;
+    /*
+     * Central routing gateway.
+     *
+     * RoutingService automatically uses the algorithm
+     * currently selected in PostgreSQL:
+     *
+     * DIJKSTRA
+     * or
+     * ASTAR
+     */
+    private final RoutingService routingService;
+
+    /*
+     * Used to store the exact algorithm that was selected
+     * when this dispatch was created.
+     */
+    private final RoutingSettingsService routingSettingsService;
 
 
     // =========================================================
     // CREATE COMPLETE DISPATCH PLAN
-    // =========================================================
-    //
-    // Emergency
-    //      ↓
-    // Best ambulance
-    //      ↓
-    // Route ambulance → emergency
-    //      ↓
-    // Select hospital
-    //      ↓
-    // Route emergency → hospital
-    //      ↓
-    // Mark ambulance EN_ROUTE
-    //      ↓
-    // Return complete trip
-    //
     // =========================================================
 
     @Transactional
@@ -67,23 +72,46 @@ public class DispatchPlanService {
     ) {
 
         // =====================================================
-        // STEP 1: FIND EMERGENCY
+        // 1. FIND EMERGENCY
         // =====================================================
 
         Emergency emergency =
                 emergencyRepository.findById(
-                                emergencyId
+                        emergencyId
+                ).orElseThrow(() ->
+                        new RuntimeException(
+                                "Emergency not found with id: "
+                                        + emergencyId
                         )
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Emergency not found with id: "
-                                                + emergencyId
-                                )
-                        );
+                );
 
 
         // =====================================================
-        // STEP 2: FIND BEST AVAILABLE AMBULANCE
+        // 2. GET CURRENT ROUTING ALGORITHM
+        // =====================================================
+        //
+        // The selected algorithm is read once at the beginning
+        // of the dispatch.
+        //
+        // This ensures that the dispatch record stores the
+        // algorithm that was actually selected for this trip.
+        //
+        // =====================================================
+
+        RoutingAlgorithm selectedAlgorithm =
+                routingSettingsService
+                        .getRoutingAlgorithm();
+
+
+        // =====================================================
+        // 3. FIND BEST AVAILABLE AMBULANCE
+        // =====================================================
+        //
+        // DispatchService uses RoutingService internally.
+        //
+        // Therefore it uses the same routing algorithm selected
+        // in Settings.
+        //
         // =====================================================
 
         DispatchResponse ambulanceResponse =
@@ -93,22 +121,28 @@ public class DispatchPlanService {
 
 
         // =====================================================
-        // STEP 3: LOAD AMBULANCE
+        // 4. LOAD SELECTED AMBULANCE
         // =====================================================
 
         Ambulance ambulance =
                 ambulanceRepository.findById(
-                                ambulanceResponse.ambulanceId()
+                        ambulanceResponse.ambulanceId()
+                ).orElseThrow(() ->
+                        new RuntimeException(
+                                "Selected ambulance not found"
                         )
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Selected ambulance not found"
-                                )
-                        );
+                );
 
 
         // =====================================================
-        // STEP 4: FIND BEST HOSPITAL
+        // 5. FIND BEST SUITABLE HOSPITAL
+        // =====================================================
+        //
+        // HospitalSelectionService also uses RoutingService.
+        //
+        // Therefore hospital selection uses the same selected
+        // routing algorithm.
+        //
         // =====================================================
 
         HospitalSelectionResponse hospitalResponse =
@@ -118,22 +152,21 @@ public class DispatchPlanService {
 
 
         // =====================================================
-        // STEP 5: LOAD HOSPITAL
+        // 6. LOAD SELECTED HOSPITAL
         // =====================================================
 
         Hospital hospital =
                 hospitalRepository.findById(
-                                hospitalResponse.hospitalId()
+                        hospitalResponse.hospitalId()
+                ).orElseThrow(() ->
+                        new RuntimeException(
+                                "Selected hospital not found"
                         )
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Selected hospital not found"
-                                )
-                        );
+                );
 
 
         // =====================================================
-        // STEP 6: ROUTE AMBULANCE → EMERGENCY
+        // 7. FIND GRAPH NODE FOR AMBULANCE
         // =====================================================
 
         GraphNode ambulanceNode =
@@ -151,6 +184,10 @@ public class DispatchPlanService {
         }
 
 
+        // =====================================================
+        // 8. FIND GRAPH NODE FOR EMERGENCY
+        // =====================================================
+
         GraphNode emergencyNode =
                 roadGraph.findNearestNode(
                         emergency.getLatitude(),
@@ -166,27 +203,39 @@ public class DispatchPlanService {
         }
 
 
-        var ambulanceToEmergency =
-                trafficAwareDijkstraService
-                        .findShortestPath(
-                                ambulanceNode.id(),
-                                emergencyNode.id()
-                        );
+        // =====================================================
+        // 9. AMBULANCE → EMERGENCY
+        // =====================================================
+        //
+        // IMPORTANT:
+        //
+        // We use the selected algorithm explicitly here.
+        //
+        // This guarantees that the actual trip route uses
+        // the same algorithm selected for this dispatch.
+        //
+        // =====================================================
+
+        TrafficDijkstraResponse ambulanceToEmergency =
+                routingService.findRoute(
+                        ambulanceNode.id(),
+                        emergencyNode.id(),
+                        selectedAlgorithm
+                );
 
 
-        TripRoute.RouteSegment
-                routeToEmergency =
+        // =====================================================
+        // 10. CREATE FIRST TRIP SEGMENT
+        // =====================================================
+
+        TripRoute.RouteSegment routeToEmergency =
                 createRouteSegment(
                         ambulanceToEmergency
                 );
 
 
         // =====================================================
-        // STEP 7: ROUTE EMERGENCY → HOSPITAL
-        // =====================================================
-        //
-        // This is the second phase of the trip.
-        //
+        // 11. FIND GRAPH NODE FOR HOSPITAL
         // =====================================================
 
         GraphNode hospitalNode =
@@ -204,27 +253,39 @@ public class DispatchPlanService {
         }
 
 
-        var emergencyToHospital =
-                trafficAwareDijkstraService
-                        .findShortestPath(
-                                emergencyNode.id(),
-                                hospitalNode.id()
-                        );
+        // =====================================================
+        // 12. EMERGENCY → HOSPITAL
+        // =====================================================
+        //
+        // Use the exact same algorithm selected for this
+        // dispatch.
+        //
+        // =====================================================
+
+        TrafficDijkstraResponse emergencyToHospital =
+                routingService.findRoute(
+                        emergencyNode.id(),
+                        hospitalNode.id(),
+                        selectedAlgorithm
+                );
 
 
-        TripRoute.RouteSegment
-                routeToHospital =
+        // =====================================================
+        // 13. CREATE SECOND TRIP SEGMENT
+        // =====================================================
+
+        TripRoute.RouteSegment routeToHospital =
                 createRouteSegment(
                         emergencyToHospital
                 );
 
 
         // =====================================================
-        // STEP 8: CALCULATE EXISTING FINAL ROUTE
+        // 14. CURRENT AMBULANCE → HOSPITAL ROUTE
         // =====================================================
         //
-        // Keep the existing route response so your current
-        // dashboard remains compatible.
+        // RouteService is still used because RouteDetails is
+        // part of the existing frontend response.
         //
         // =====================================================
 
@@ -236,13 +297,9 @@ public class DispatchPlanService {
 
 
         // =====================================================
-        // STEP 9: ALL ROUTES SUCCESSFUL
-        // =====================================================
-        //
-        // Only now change:
+        // 15. CHANGE AMBULANCE STATUS
         //
         // AVAILABLE → EN_ROUTE
-        //
         // =====================================================
 
         ambulance.setStatus(
@@ -256,65 +313,134 @@ public class DispatchPlanService {
 
 
         // =====================================================
-        // STEP 10: CREATE TRIP
+        // 16. CREATE PERSISTENT DISPATCH RECORD
+        // =====================================================
+        //
+        // The actual selected algorithm is stored here.
+        //
+        // DIJKSTRA
+        // or
+        // ASTAR
+        //
         // =====================================================
 
-        TripRoute trip =
-                new TripRoute(
+        Dispatch dispatch =
+                Dispatch.builder()
 
-                        TripRoute.TripStatus
-                                .TO_EMERGENCY,
+                        .emergencyId(
+                                emergency.getId()
+                        )
 
-                        routeToEmergency,
+                        .ambulanceId(
+                                ambulance.getId()
+                        )
 
-                        routeToHospital
+                        .ambulanceNumber(
+                                ambulance.getAmbulanceNumber()
+                        )
 
+                        .hospitalId(
+                                hospital.getId()
+                        )
+
+                        .hospitalName(
+                                hospital.getName()
+                        )
+
+                        .routingAlgorithm(
+                                selectedAlgorithm.name()
+                        )
+
+                        .distanceToEmergencyKm(
+                                routeToEmergency.distanceKm()
+                        )
+
+                        .timeToEmergencyMinutes(
+                                routeToEmergency
+                                        .estimatedTravelTimeMinutes()
+                        )
+
+                        .distanceToHospitalKm(
+                                routeToHospital.distanceKm()
+                        )
+
+                        .timeToHospitalMinutes(
+                                routeToHospital
+                                        .estimatedTravelTimeMinutes()
+                        )
+
+                        .totalDistanceKm(
+                                routeToEmergency.distanceKm()
+                                        +
+                                        routeToHospital.distanceKm()
+                        )
+
+                        .totalEstimatedTimeMinutes(
+                                routeToEmergency
+                                        .estimatedTravelTimeMinutes()
+                                        +
+                                        routeToHospital
+                                                .estimatedTravelTimeMinutes()
+                        )
+
+                        .status(
+                                "IN_PROGRESS"
+                        )
+
+                        .dispatchedAt(
+                                LocalDateTime.now()
+                        )
+
+                        .build();
+
+
+        Dispatch savedDispatch =
+                dispatchRepository.save(
+                        dispatch
                 );
 
 
         // =====================================================
-        // STEP 11: RETURN COMPLETE PLAN
+        // 17. INITIAL TRIP STATUS
+        // =====================================================
+
+        TripRoute trip =
+                new TripRoute(
+                        TripRoute.TripStatus.TO_EMERGENCY,
+                        routeToEmergency,
+                        routeToHospital
+                );
+
+
+        // =====================================================
+        // 18. RETURN COMPLETE DISPATCH PLAN
         // =====================================================
 
         return new DispatchPlanResponse(
 
+                savedDispatch.getId(),
+
                 emergency.getId(),
 
-
-                // -------------------------------------------------
-                // AMBULANCE
-                // -------------------------------------------------
-
-                new DispatchPlanResponse
-                        .AmbulanceDetails(
+                new DispatchPlanResponse.AmbulanceDetails(
 
                         ambulance.getId(),
 
-                        ambulance
-                                .getAmbulanceNumber(),
+                        ambulance.getAmbulanceNumber(),
 
                         ambulance.getType(),
 
                         ambulance.getStatus(),
 
-                        ambulanceResponse
-                                .distanceKm(),
+                        ambulanceResponse.distanceKm(),
 
                         ambulanceResponse
                                 .estimatedTravelTimeMinutes(),
 
-                        ambulanceResponse
-                                .trafficLevel()
-
+                        ambulanceResponse.trafficLevel()
                 ),
 
-
-                // -------------------------------------------------
-                // HOSPITAL
-                // -------------------------------------------------
-
-                new DispatchPlanResponse
-                        .HospitalDetails(
+                new DispatchPlanResponse.HospitalDetails(
 
                         hospital.getId(),
 
@@ -326,52 +452,31 @@ public class DispatchPlanService {
 
                         hospital.getAvailableBeds(),
 
-                        hospitalResponse
-                                .distanceKm(),
+                        hospitalResponse.distanceKm(),
 
                         hospitalResponse
                                 .estimatedTravelTimeMinutes(),
 
-                        hospitalResponse
-                                .trafficLevel()
-
+                        hospitalResponse.trafficLevel()
                 ),
 
+                new DispatchPlanResponse.RouteDetails(
 
-                // -------------------------------------------------
-                // EXISTING ROUTE
-                // -------------------------------------------------
+                        routeResponse.sourceNode(),
 
-                new DispatchPlanResponse
-                        .RouteDetails(
+                        routeResponse.destinationNode(),
 
-                        routeResponse
-                                .sourceNode(),
-
-                        routeResponse
-                                .destinationNode(),
-
-                        routeResponse
-                                .distanceKm(),
+                        routeResponse.distanceKm(),
 
                         routeResponse
                                 .estimatedTravelTimeMinutes(),
 
-                        routeResponse
-                                .trafficLevel(),
+                        routeResponse.trafficLevel(),
 
-                        routeResponse
-                                .nodePath()
-
+                        routeResponse.nodePath()
                 ),
-
-
-                // -------------------------------------------------
-                // COMPLETE TRIP
-                // -------------------------------------------------
 
                 trip
-
         );
     }
 
@@ -380,21 +485,20 @@ public class DispatchPlanService {
     // CREATE ROUTE SEGMENT
     // =========================================================
 
-    private TripRoute.RouteSegment
-    createRouteSegment(
-            com.ambulanceos.dto.TrafficDijkstraResponse
-                    response
+    private TripRoute.RouteSegment createRouteSegment(
+            TrafficDijkstraResponse response
     ) {
 
-        List<TripRoute.RoutePoint>
-                coordinates =
+        List<TripRoute.RoutePoint> coordinates =
                 new ArrayList<>();
 
 
-        for (
-                String nodeId :
-                response.path()
-        ) {
+        // -----------------------------------------------------
+        // Convert graph node IDs into coordinates.
+        // -----------------------------------------------------
+
+        for (String nodeId :
+                response.path()) {
 
             GraphNode node =
                     roadGraph.getNode(
@@ -413,11 +517,8 @@ public class DispatchPlanService {
 
             coordinates.add(
                     new TripRoute.RoutePoint(
-
                             node.latitude(),
-
                             node.longitude()
-
                     )
             );
         }
@@ -427,15 +528,13 @@ public class DispatchPlanService {
 
                 response.distanceKm(),
 
-                response
-                        .estimatedTravelTimeMinutes(),
+                response.estimatedTravelTimeMinutes(),
 
                 response.trafficLevel(),
 
                 response.path(),
 
                 coordinates
-
         );
     }
 }
