@@ -4,6 +4,8 @@ import java.util.List;
 
 public record DispatchPlanResponse(
 
+        Long dispatchId,
+
         Long emergencyId,
 
         AmbulanceDetails ambulance,
@@ -35,7 +37,6 @@ public record DispatchPlanResponse(
     ) {
     }
 
-
     public record HospitalDetails(
 
             Long id,
@@ -56,7 +57,6 @@ public record DispatchPlanResponse(
 
     ) {
     }
-
 
     public record RouteDetails(
 
