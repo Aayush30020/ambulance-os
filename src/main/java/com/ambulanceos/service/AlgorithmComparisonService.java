@@ -21,10 +21,28 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class AlgorithmComparisonService {
 
+    /*
+     * ---------------------------------------------------------
+     * BENCHMARK CONFIGURATION
+     * ---------------------------------------------------------
+     */
+
+    private static final int WARMUP_RUNS = 2;
+
+    private static final int MEASURED_RUNS = 10;
+
+
     private final GurgaonRoadGraph roadGraph;
 
     private final TrafficService trafficService;
 
+
+    /*
+     * Cached maximum graph speed used by the A* heuristic.
+     *
+     * We calculate this only once because the graph does not
+     * change during application execution.
+     */
     private Double maximumGraphSpeedKmh;
 
 
@@ -37,57 +55,181 @@ public class AlgorithmComparisonService {
             String destinationNode
     ) {
 
-        validateNode(sourceNode, "Source");
+        // -----------------------------------------------------
+        // Validate source
+        // -----------------------------------------------------
 
-        validateNode(destinationNode, "Destination");
+        validateNode(
+                sourceNode,
+                "Source"
+        );
 
 
         // -----------------------------------------------------
-        // Run Traffic-Aware Dijkstra
+        // Validate destination
         // -----------------------------------------------------
 
-        SearchResult dijkstraResult =
-                runDijkstra(
-                        sourceNode,
-                        destinationNode
+        validateNode(
+                destinationNode,
+                "Destination"
+        );
+
+
+        /*
+         * =====================================================
+         * WARM-UP
+         * =====================================================
+         *
+         * JVM/JIT compilation and CPU/cache effects can make
+         * the first few executions slower.
+         *
+         * Therefore we execute both algorithms first without
+         * including these runs in the benchmark statistics.
+         */
+
+        for (int i = 0; i < WARMUP_RUNS; i++) {
+
+            runDijkstra(
+                    sourceNode,
+                    destinationNode
+            );
+
+            runAStar(
+                    sourceNode,
+                    destinationNode
+            );
+        }
+
+
+        /*
+         * =====================================================
+         * MEASURED RUNS
+         * =====================================================
+         */
+
+        List<SearchResult> dijkstraResults =
+                new ArrayList<>();
+
+
+        List<SearchResult> aStarResults =
+                new ArrayList<>();
+
+
+        /*
+         * Alternate algorithm order on every iteration.
+         *
+         * This reduces systematic ordering bias where the
+         * algorithm executed first might receive slightly
+         * different CPU/cache conditions.
+         */
+
+        for (int i = 0; i < MEASURED_RUNS; i++) {
+
+            if (i % 2 == 0) {
+
+                dijkstraResults.add(
+                        runDijkstra(
+                                sourceNode,
+                                destinationNode
+                        )
                 );
 
-
-        // -----------------------------------------------------
-        // Run A*
-        // -----------------------------------------------------
-
-        SearchResult aStarResult =
-                runAStar(
-                        sourceNode,
-                        destinationNode
+                aStarResults.add(
+                        runAStar(
+                                sourceNode,
+                                destinationNode
+                        )
                 );
 
+            } else {
 
-        // -----------------------------------------------------
-        // Compare results
-        // -----------------------------------------------------
+                aStarResults.add(
+                        runAStar(
+                                sourceNode,
+                                destinationNode
+                        )
+                );
+
+                dijkstraResults.add(
+                        runDijkstra(
+                                sourceNode,
+                                destinationNode
+                        )
+                );
+            }
+        }
+
+
+        /*
+         * =====================================================
+         * REPRESENTATIVE RESULTS
+         * =====================================================
+         *
+         * The route itself should be deterministic because the
+         * graph and traffic model are deterministic.
+         *
+         * We use the first measured run as the representative
+         * route/result shown in the existing UI.
+         */
+
+        SearchResult dijkstraRepresentative =
+                dijkstraResults.get(0);
+
+
+        SearchResult aStarRepresentative =
+                aStarResults.get(0);
+
+
+        /*
+         * =====================================================
+         * VERIFY OPTIMALITY
+         * =====================================================
+         */
 
         boolean sameDistance =
                 Math.abs(
-                        dijkstraResult.distanceKm()
-                                - aStarResult.distanceKm()
+                        dijkstraRepresentative.distanceKm()
+                                - aStarRepresentative.distanceKm()
                 ) < 0.0001;
 
 
         boolean sameTravelTime =
                 Math.abs(
-                        dijkstraResult.travelTimeMinutes()
-                                - aStarResult.travelTimeMinutes()
+                        dijkstraRepresentative.travelTimeMinutes()
+                                - aStarRepresentative.travelTimeMinutes()
                 ) < 0.0001;
 
 
         boolean samePath =
-                dijkstraResult.path()
+                dijkstraRepresentative.path()
                         .equals(
-                                aStarResult.path()
+                                aStarRepresentative.path()
                         );
 
+
+        /*
+         * =====================================================
+         * CALCULATE BENCHMARK STATISTICS
+         * =====================================================
+         */
+
+        BenchmarkStatistics dijkstraStats =
+                calculateStatistics(
+                        dijkstraResults
+                );
+
+
+        BenchmarkStatistics aStarStats =
+                calculateStatistics(
+                        aStarResults
+                );
+
+
+        /*
+         * =====================================================
+         * RETURN RESPONSE
+         * =====================================================
+         */
 
         return new AlgorithmComparisonResponse(
 
@@ -95,53 +237,100 @@ public class AlgorithmComparisonService {
 
                 destinationNode,
 
+
                 new AlgorithmComparisonResponse.AlgorithmResult(
 
                         "TRAFFIC_DIJKSTRA",
 
                         roundToTwoDecimals(
-                                dijkstraResult.distanceKm()
+                                dijkstraRepresentative.distanceKm()
                         ),
 
                         roundToTwoDecimals(
-                                dijkstraResult.travelTimeMinutes()
+                                dijkstraRepresentative.travelTimeMinutes()
                         ),
 
-                        dijkstraResult.trafficLevel(),
+                        dijkstraRepresentative.trafficLevel(),
 
-                        dijkstraResult.nodesExplored(),
+                        (int) Math.round(
+                                dijkstraStats.averageNodesExplored()
+                        ),
 
-                        dijkstraResult.executionTimeMillis(),
+                        Math.round(
+                                dijkstraStats.averageExecutionTimeMillis()
+                        ),
 
-                        dijkstraResult.path()
+                        dijkstraRepresentative.path(),
+
+                        roundToTwoDecimals(
+                                dijkstraStats.averageExecutionTimeMillis()
+                        ),
+
+                        roundToTwoDecimals(
+                                dijkstraStats.medianExecutionTimeMillis()
+                        ),
+
+                        dijkstraStats.minimumExecutionTimeMillis(),
+
+                        dijkstraStats.maximumExecutionTimeMillis(),
+
+                        roundToTwoDecimals(
+                                dijkstraStats.averageNodesExplored()
+                        )
                 ),
+
 
                 new AlgorithmComparisonResponse.AlgorithmResult(
 
                         "A_STAR",
 
                         roundToTwoDecimals(
-                                aStarResult.distanceKm()
+                                aStarRepresentative.distanceKm()
                         ),
 
                         roundToTwoDecimals(
-                                aStarResult.travelTimeMinutes()
+                                aStarRepresentative.travelTimeMinutes()
                         ),
 
-                        aStarResult.trafficLevel(),
+                        aStarRepresentative.trafficLevel(),
 
-                        aStarResult.nodesExplored(),
+                        (int) Math.round(
+                                aStarStats.averageNodesExplored()
+                        ),
 
-                        aStarResult.executionTimeMillis(),
+                        Math.round(
+                                aStarStats.averageExecutionTimeMillis()
+                        ),
 
-                        aStarResult.path()
+                        aStarRepresentative.path(),
+
+                        roundToTwoDecimals(
+                                aStarStats.averageExecutionTimeMillis()
+                        ),
+
+                        roundToTwoDecimals(
+                                aStarStats.medianExecutionTimeMillis()
+                        ),
+
+                        aStarStats.minimumExecutionTimeMillis(),
+
+                        aStarStats.maximumExecutionTimeMillis(),
+
+                        roundToTwoDecimals(
+                                aStarStats.averageNodesExplored()
+                        )
                 ),
+
 
                 sameDistance,
 
                 sameTravelTime,
 
-                samePath
+                samePath,
+
+                WARMUP_RUNS,
+
+                MEASURED_RUNS
         );
     }
 
@@ -224,11 +413,17 @@ public class AlgorithmComparisonService {
                     );
 
 
+            /*
+             * Ignore stale PriorityQueue entries.
+             */
             if (currentCost > bestKnownCost) {
                 continue;
             }
 
 
+            /*
+             * Ignore already processed nodes.
+             */
             if (processedNodes.contains(
                     currentNode
             )) {
@@ -241,6 +436,10 @@ public class AlgorithmComparisonService {
             );
 
 
+            /*
+             * Once the destination is removed from the
+             * PriorityQueue, its shortest cost is final.
+             */
             if (currentNode.equals(
                     destinationNode
             )) {
@@ -248,6 +447,9 @@ public class AlgorithmComparisonService {
             }
 
 
+            /*
+             * Explore every outgoing road.
+             */
             for (GraphEdge edge :
                     roadGraph.getNeighbors(
                             currentNode
@@ -265,6 +467,9 @@ public class AlgorithmComparisonService {
                         edge.travelTimeMinutes();
 
 
+                /*
+                 * Get deterministic traffic multiplier.
+                 */
                 double trafficMultiplier =
                         trafficService.getTrafficMultiplier(
                                 currentNode,
@@ -272,6 +477,10 @@ public class AlgorithmComparisonService {
                         );
 
 
+                /*
+                 * Dijkstra optimizes traffic-adjusted
+                 * travel time.
+                 */
                 double trafficAdjustedTime =
                         baseTravelTime
                                 * trafficMultiplier;
@@ -282,6 +491,10 @@ public class AlgorithmComparisonService {
                                 + trafficAdjustedTime;
 
 
+                /*
+                 * Physical road distance is tracked
+                 * separately from the optimization cost.
+                 */
                 double currentDistance =
                         distances.getOrDefault(
                                 currentNode,
@@ -301,6 +514,9 @@ public class AlgorithmComparisonService {
                         );
 
 
+                /*
+                 * Relaxation step.
+                 */
                 if (newCost < knownCost) {
 
                     costs.put(
@@ -332,6 +548,9 @@ public class AlgorithmComparisonService {
         }
 
 
+        /*
+         * Destination was not reached.
+         */
         if (!costs.containsKey(
                 destinationNode
         )) {
@@ -345,6 +564,9 @@ public class AlgorithmComparisonService {
         }
 
 
+        /*
+         * Reconstruct shortest path.
+         */
         List<String> path =
                 reconstructPath(
                         sourceNode,
@@ -353,12 +575,18 @@ public class AlgorithmComparisonService {
                 );
 
 
+        /*
+         * Calculate final traffic-adjusted travel time.
+         */
         double travelTime =
                 calculateTravelTime(
                         path
                 );
 
 
+        /*
+         * Calculate overall traffic level.
+         */
         String trafficLevel =
                 calculateTrafficLevel(
                         path
@@ -427,6 +655,10 @@ public class AlgorithmComparisonService {
                 );
 
 
+        /*
+         * gScore = actual traffic-adjusted travel time
+         * from source to current node.
+         */
         gCosts.put(
                 sourceNode,
                 0.0
@@ -439,6 +671,9 @@ public class AlgorithmComparisonService {
         );
 
 
+        /*
+         * Calculate initial heuristic.
+         */
         double sourceHeuristic =
                 heuristicMinutes(
                         sourceNode,
@@ -446,6 +681,9 @@ public class AlgorithmComparisonService {
                 );
 
 
+        /*
+         * fScore = gScore + heuristic.
+         */
         priorityQueue.offer(
                 new NodeScore(
                         sourceNode,
@@ -465,6 +703,9 @@ public class AlgorithmComparisonService {
                     current.nodeId();
 
 
+            /*
+             * Ignore already processed nodes.
+             */
             if (processedNodes.contains(
                     currentNode
             )) {
@@ -477,6 +718,9 @@ public class AlgorithmComparisonService {
             );
 
 
+            /*
+             * Destination reached.
+             */
             if (currentNode.equals(
                     destinationNode
             )) {
@@ -484,6 +728,9 @@ public class AlgorithmComparisonService {
             }
 
 
+            /*
+             * Explore neighboring roads.
+             */
             for (GraphEdge edge :
                     roadGraph.getNeighbors(
                             currentNode
@@ -501,6 +748,9 @@ public class AlgorithmComparisonService {
                         edge.travelTimeMinutes();
 
 
+                /*
+                 * Same traffic model used by Dijkstra.
+                 */
                 double trafficMultiplier =
                         trafficService.getTrafficMultiplier(
                                 currentNode,
@@ -508,6 +758,10 @@ public class AlgorithmComparisonService {
                         );
 
 
+                /*
+                 * Same optimization cost used by
+                 * Traffic-Aware Dijkstra.
+                 */
                 double edgeCost =
                         baseTravelTime
                                 * trafficMultiplier;
@@ -525,6 +779,9 @@ public class AlgorithmComparisonService {
                                 + edgeCost;
 
 
+                /*
+                 * Track physical distance separately.
+                 */
                 double currentDistance =
                         distances.getOrDefault(
                                 currentNode,
@@ -544,6 +801,9 @@ public class AlgorithmComparisonService {
                         );
 
 
+                /*
+                 * Relaxation.
+                 */
                 if (newGCost < knownGCost) {
 
                     gCosts.put(
@@ -564,6 +824,10 @@ public class AlgorithmComparisonService {
                     );
 
 
+                    /*
+                     * Estimate remaining travel time
+                     * from neighbor to destination.
+                     */
                     double heuristic =
                             heuristicMinutes(
                                     neighbor,
@@ -571,6 +835,11 @@ public class AlgorithmComparisonService {
                             );
 
 
+                    /*
+                     * A* priority:
+                     *
+                     * f(n) = g(n) + h(n)
+                     */
                     double fScore =
                             newGCost
                                     + heuristic;
@@ -588,6 +857,9 @@ public class AlgorithmComparisonService {
         }
 
 
+        /*
+         * Destination was not reached.
+         */
         if (!gCosts.containsKey(
                 destinationNode
         )) {
@@ -601,6 +873,9 @@ public class AlgorithmComparisonService {
         }
 
 
+        /*
+         * Reconstruct route.
+         */
         List<String> path =
                 reconstructPath(
                         sourceNode,
@@ -609,12 +884,18 @@ public class AlgorithmComparisonService {
                 );
 
 
+        /*
+         * Calculate final travel time.
+         */
         double travelTime =
                 calculateTravelTime(
                         path
                 );
 
 
+        /*
+         * Calculate traffic level.
+         */
         String trafficLevel =
                 calculateTrafficLevel(
                         path
@@ -676,6 +957,9 @@ public class AlgorithmComparisonService {
         }
 
 
+        /*
+         * Straight-line geographic distance.
+         */
         double straightLineDistance =
                 haversineDistance(
                         current.latitude(),
@@ -685,6 +969,14 @@ public class AlgorithmComparisonService {
                 );
 
 
+        /*
+         * Use maximum observed graph speed as the
+         * lower-bound travel speed.
+         *
+         * This makes the heuristic admissible because
+         * actual road travel cannot be faster than the
+         * fastest base road speed represented in the graph.
+         */
         double maximumSpeed =
                 getMaximumGraphSpeedKmh();
 
@@ -702,6 +994,9 @@ public class AlgorithmComparisonService {
 
     private double getMaximumGraphSpeedKmh() {
 
+        /*
+         * Calculate only once.
+         */
         if (maximumGraphSpeedKmh != null) {
 
             return maximumGraphSpeedKmh;
@@ -712,6 +1007,10 @@ public class AlgorithmComparisonService {
                 0.0;
 
 
+        /*
+         * Inspect every graph edge and determine its
+         * implied base speed.
+         */
         for (GraphNode node :
                 roadGraph.getNodes().values()) {
 
@@ -965,6 +1264,111 @@ public class AlgorithmComparisonService {
 
 
     // =========================================================
+    // BENCHMARK STATISTICS
+    // =========================================================
+
+    private BenchmarkStatistics calculateStatistics(
+            List<SearchResult> results
+    ) {
+
+        /*
+         * Extract execution times.
+         */
+        List<Long> executionTimes =
+                results.stream()
+                        .map(
+                                SearchResult::executionTimeMillis
+                        )
+                        .sorted()
+                        .toList();
+
+
+        /*
+         * Extract nodes explored.
+         */
+        double averageNodes =
+                results.stream()
+                        .mapToInt(
+                                SearchResult::nodesExplored
+                        )
+                        .average()
+                        .orElse(0.0);
+
+
+        /*
+         * Average execution time.
+         */
+        double averageExecutionTime =
+                executionTimes.stream()
+                        .mapToLong(
+                                Long::longValue
+                        )
+                        .average()
+                        .orElse(0.0);
+
+
+        /*
+         * Median execution time.
+         */
+        double medianExecutionTime;
+
+
+        int size =
+                executionTimes.size();
+
+
+        if (size % 2 == 0) {
+
+            long first =
+                    executionTimes.get(
+                            size / 2 - 1
+                    );
+
+
+            long second =
+                    executionTimes.get(
+                            size / 2
+                    );
+
+
+            medianExecutionTime =
+                    (first + second) / 2.0;
+
+        } else {
+
+            medianExecutionTime =
+                    executionTimes.get(
+                            size / 2
+                    );
+        }
+
+
+        long minimumExecutionTime =
+                executionTimes.get(0);
+
+
+        long maximumExecutionTime =
+                executionTimes.get(
+                        executionTimes.size() - 1
+                );
+
+
+        return new BenchmarkStatistics(
+
+                averageExecutionTime,
+
+                medianExecutionTime,
+
+                minimumExecutionTime,
+
+                maximumExecutionTime,
+
+                averageNodes
+        );
+    }
+
+
+    // =========================================================
     // VALIDATE NODE
     // =========================================================
 
@@ -973,7 +1377,9 @@ public class AlgorithmComparisonService {
             String label
     ) {
 
-        if (roadGraph.getNode(nodeId) == null) {
+        if (roadGraph.getNode(
+                nodeId
+        ) == null) {
 
             throw new RuntimeException(
                     label
@@ -985,7 +1391,7 @@ public class AlgorithmComparisonService {
 
 
     // =========================================================
-    // HAVERSINE
+    // HAVERSINE DISTANCE
     // =========================================================
 
     private double haversineDistance(
@@ -1091,7 +1497,7 @@ public class AlgorithmComparisonService {
 
 
     // =========================================================
-    // INTERNAL RESULT
+    // SEARCH RESULT
     // =========================================================
 
     private record SearchResult(
@@ -1107,6 +1513,26 @@ public class AlgorithmComparisonService {
             long executionTimeMillis,
 
             List<String> path
+
+    ) {
+    }
+
+
+    // =========================================================
+    // BENCHMARK STATISTICS
+    // =========================================================
+
+    private record BenchmarkStatistics(
+
+            double averageExecutionTimeMillis,
+
+            double medianExecutionTimeMillis,
+
+            long minimumExecutionTimeMillis,
+
+            long maximumExecutionTimeMillis,
+
+            double averageNodesExplored
 
     ) {
     }

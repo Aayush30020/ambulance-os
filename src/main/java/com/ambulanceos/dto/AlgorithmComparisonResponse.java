@@ -16,7 +16,11 @@ public record AlgorithmComparisonResponse(
 
         boolean sameOptimalTravelTime,
 
-        boolean samePath
+        boolean samePath,
+
+        int warmupRuns,
+
+        int measuredRuns
 
 ) {
 
@@ -34,7 +38,17 @@ public record AlgorithmComparisonResponse(
 
             long executionTimeMillis,
 
-            List<String> path
+            List<String> path,
+
+            double averageExecutionTimeMillis,
+
+            double medianExecutionTimeMillis,
+
+            long minimumExecutionTimeMillis,
+
+            long maximumExecutionTimeMillis,
+
+            double averageNodesExplored
 
     ) {
     }
