@@ -10,7 +10,23 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "emergencies")
+@Table(
+        name = "emergencies",
+        indexes = {
+                @Index(
+                        name = "idx_emergencies_status",
+                        columnList = "status"
+                ),
+                @Index(
+                        name = "idx_emergencies_created_at",
+                        columnList = "created_at"
+                ),
+                @Index(
+                        name = "idx_emergencies_priority",
+                        columnList = "priority"
+                )
+        }
+)
 @Getter
 @Setter
 @NoArgsConstructor

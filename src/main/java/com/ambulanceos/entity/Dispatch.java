@@ -10,7 +10,65 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "dispatches")
+@Table(
+        name = "dispatches",
+        indexes = {
+
+                /*
+                 * Used frequently for filtering dispatches by
+                 * their current lifecycle state.
+                 */
+                @Index(
+                        name = "idx_dispatches_status",
+                        columnList = "status"
+                ),
+
+                /*
+                 * Used by dispatch history to retrieve the
+                 * newest dispatches first.
+                 */
+                @Index(
+                        name = "idx_dispatches_dispatched_at",
+                        columnList = "dispatched_at"
+                ),
+
+                /*
+                 * Allows efficient lookup of dispatch history
+                 * belonging to a particular emergency.
+                 */
+                @Index(
+                        name = "idx_dispatches_emergency_id",
+                        columnList = "emergency_id"
+                ),
+
+                /*
+                 * Allows efficient lookup of an ambulance's
+                 * previous dispatches.
+                 */
+                @Index(
+                        name = "idx_dispatches_ambulance_id",
+                        columnList = "ambulance_id"
+                ),
+
+                /*
+                 * Allows efficient lookup of hospital-related
+                 * dispatch history.
+                 */
+                @Index(
+                        name = "idx_dispatches_hospital_id",
+                        columnList = "hospital_id"
+                ),
+
+                /*
+                 * Useful for comparing routing algorithms in
+                 * analytics.
+                 */
+                @Index(
+                        name = "idx_dispatches_routing_algorithm",
+                        columnList = "routing_algorithm"
+                )
+        }
+)
 @Getter
 @Setter
 @NoArgsConstructor
