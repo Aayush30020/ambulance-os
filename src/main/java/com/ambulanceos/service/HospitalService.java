@@ -3,6 +3,7 @@ package com.ambulanceos.service;
 import com.ambulanceos.dto.HospitalRequest;
 import com.ambulanceos.dto.HospitalResponse;
 import com.ambulanceos.entity.Hospital;
+import com.ambulanceos.exception.HospitalNotFoundException;
 import com.ambulanceos.repository.HospitalRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -89,10 +90,7 @@ public class HospitalService {
                 hospitalRepository.findById(id)
 
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Hospital not found with id: "
-                                                + id
-                                )
+                                new HospitalNotFoundException(id)
                         );
 
 
@@ -113,10 +111,7 @@ public class HospitalService {
                 hospitalRepository.findById(id)
 
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Hospital not found with id: "
-                                                + id
-                                )
+                                new HospitalNotFoundException(id)
                         );
 
 

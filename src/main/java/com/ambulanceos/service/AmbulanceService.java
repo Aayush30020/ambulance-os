@@ -3,6 +3,7 @@ package com.ambulanceos.service;
 import com.ambulanceos.dto.AmbulanceRequest;
 import com.ambulanceos.dto.AmbulanceResponse;
 import com.ambulanceos.entity.Ambulance;
+import com.ambulanceos.exception.AmbulanceNotFoundException;
 import com.ambulanceos.repository.AmbulanceRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -24,36 +25,41 @@ public class AmbulanceService {
             AmbulanceRequest request
     ) {
 
-        Ambulance ambulance = Ambulance.builder()
+        Ambulance ambulance =
+                Ambulance.builder()
 
-                .ambulanceNumber(
-                        request.ambulanceNumber()
-                )
+                        .ambulanceNumber(
+                                request.ambulanceNumber()
+                        )
 
-                .latitude(
-                        request.latitude()
-                )
+                        .latitude(
+                                request.latitude()
+                        )
 
-                .longitude(
-                        request.longitude()
-                )
+                        .longitude(
+                                request.longitude()
+                        )
 
-                .status(
-                        request.status()
-                )
+                        .status(
+                                request.status().toUpperCase()
+                        )
 
-                .type(
-                        request.type()
-                )
+                        .type(
+                                request.type().toUpperCase()
+                        )
 
-                .build();
+                        .build();
 
 
         Ambulance savedAmbulance =
-                ambulanceRepository.save(ambulance);
+                ambulanceRepository.save(
+                        ambulance
+                );
 
 
-        return mapToResponse(savedAmbulance);
+        return mapToResponse(
+                savedAmbulance
+        );
     }
 
 
@@ -61,14 +67,13 @@ public class AmbulanceService {
     // GET ALL AMBULANCES
     // =========================================================
 
-    public List<AmbulanceResponse> getAllAmbulances() {
+    public List<AmbulanceResponse>
+    getAllAmbulances() {
 
-        return ambulanceRepository.findAll()
-
+        return ambulanceRepository
+                .findAll()
                 .stream()
-
                 .map(this::mapToResponse)
-
                 .toList();
     }
 
@@ -82,17 +87,18 @@ public class AmbulanceService {
     ) {
 
         Ambulance ambulance =
-                ambulanceRepository.findById(id)
-
+                ambulanceRepository
+                        .findById(id)
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Ambulance not found with id: "
-                                                + id
+                                new AmbulanceNotFoundException(
+                                        id
                                 )
                         );
 
 
-        return mapToResponse(ambulance);
+        return mapToResponse(
+                ambulance
+        );
     }
 
 
@@ -106,29 +112,45 @@ public class AmbulanceService {
     ) {
 
         Ambulance ambulance =
-                ambulanceRepository.findById(id)
-
+                ambulanceRepository
+                        .findById(id)
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Ambulance not found with id: "
-                                                + id
+                                new AmbulanceNotFoundException(
+                                        id
                                 )
                         );
 
 
-        ambulance.setStatus(status);
+        if (
+                status == null
+                        || status.isBlank()
+        ) {
+
+            throw new IllegalArgumentException(
+                    "Ambulance status cannot be empty"
+            );
+        }
+
+
+        ambulance.setStatus(
+                status.toUpperCase()
+        );
 
 
         Ambulance updatedAmbulance =
-                ambulanceRepository.save(ambulance);
+                ambulanceRepository.save(
+                        ambulance
+                );
 
 
-        return mapToResponse(updatedAmbulance);
+        return mapToResponse(
+                updatedAmbulance
+        );
     }
 
 
     // =========================================================
-    // ENTITY → RESPONSE DTO
+    // MAP ENTITY → RESPONSE
     // =========================================================
 
     private AmbulanceResponse mapToResponse(

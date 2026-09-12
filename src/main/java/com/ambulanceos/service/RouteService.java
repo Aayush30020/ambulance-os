@@ -4,6 +4,9 @@ import com.ambulanceos.dto.RouteResponse;
 import com.ambulanceos.dto.TrafficDijkstraResponse;
 import com.ambulanceos.entity.Ambulance;
 import com.ambulanceos.entity.Hospital;
+import com.ambulanceos.exception.AmbulanceNotFoundException;
+import com.ambulanceos.exception.HospitalNotFoundException;
+import com.ambulanceos.exception.RouteNotFoundException;
 import com.ambulanceos.graph.GraphNode;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import com.ambulanceos.repository.AmbulanceRepository;
@@ -77,14 +80,12 @@ public class RouteService {
 
         Ambulance ambulance =
                 ambulanceRepository.findById(
+                        ambulanceId
+                ).orElseThrow(() ->
+                        new AmbulanceNotFoundException(
                                 ambulanceId
                         )
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Ambulance not found with id: "
-                                                + ambulanceId
-                                )
-                        );
+                );
 
 
         // =====================================================
@@ -93,14 +94,12 @@ public class RouteService {
 
         Hospital hospital =
                 hospitalRepository.findById(
+                        hospitalId
+                ).orElseThrow(() ->
+                        new HospitalNotFoundException(
                                 hospitalId
                         )
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Hospital not found with id: "
-                                                + hospitalId
-                                )
-                        );
+                );
 
 
         // =====================================================
@@ -116,8 +115,9 @@ public class RouteService {
 
         if (sourceNode == null) {
 
-            throw new RuntimeException(
-                    "Unable to find road node near ambulance"
+            throw new RouteNotFoundException(
+                    "Unable to find road node near ambulance "
+                            + ambulance.getAmbulanceNumber()
             );
         }
 
@@ -135,8 +135,9 @@ public class RouteService {
 
         if (destinationNode == null) {
 
-            throw new RuntimeException(
-                    "Unable to find road node near hospital"
+            throw new RouteNotFoundException(
+                    "Unable to find road node near hospital "
+                            + hospital.getName()
             );
         }
 
@@ -145,28 +146,38 @@ public class RouteService {
         // 5. RUN SELECTED ROUTING ALGORITHM
         // =====================================================
         //
-        // RoutingService automatically reads the current
-        // algorithm from the system settings.
+        // RoutingService automatically determines the current
+        // routing algorithm from the system settings.
         //
-        // If setting is:
+        // DIJKSTRA:
+        //      Traffic-aware Dijkstra
         //
-        //      DIJKSTRA
-        //
-        // Traffic-aware Dijkstra is used.
-        //
-        // If setting is:
-        //
-        //      ASTAR
-        //
-        // A* is used.
+        // ASTAR:
+        //      A*
         //
         // =====================================================
 
-        TrafficDijkstraResponse trafficRoute =
-                routingService.findRoute(
-                        sourceNode.id(),
-                        destinationNode.id()
-                );
+        TrafficDijkstraResponse trafficRoute;
+
+        try {
+
+            trafficRoute =
+                    routingService.findRoute(
+                            sourceNode.id(),
+                            destinationNode.id()
+                    );
+
+        } catch (RuntimeException exception) {
+
+            throw new RouteNotFoundException(
+                    "No route found between ambulance "
+                            + ambulance.getAmbulanceNumber()
+                            + " and hospital "
+                            + hospital.getName()
+                            + ": "
+                            + exception.getMessage()
+            );
+        }
 
 
         // =====================================================
@@ -175,6 +186,17 @@ public class RouteService {
 
         List<String> nodePath =
                 trafficRoute.path();
+
+
+        if (
+                nodePath == null
+                        || nodePath.isEmpty()
+        ) {
+
+            throw new RouteNotFoundException(
+                    "Routing algorithm returned an empty route"
+            );
+        }
 
 
         // =====================================================
@@ -193,10 +215,8 @@ public class RouteService {
                 new ArrayList<>();
 
 
-        for (
-                String nodeId :
-                nodePath
-        ) {
+        for (String nodeId :
+                nodePath) {
 
             GraphNode node =
                     roadGraph.getNode(
@@ -206,7 +226,7 @@ public class RouteService {
 
             if (node == null) {
 
-                throw new RuntimeException(
+                throw new RouteNotFoundException(
                         "Route node not found in graph: "
                                 + nodeId
                 );

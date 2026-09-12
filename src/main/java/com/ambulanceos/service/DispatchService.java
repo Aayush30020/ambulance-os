@@ -5,6 +5,10 @@ import com.ambulanceos.dto.TrafficDijkstraResponse;
 import com.ambulanceos.entity.Ambulance;
 import com.ambulanceos.entity.Dispatch;
 import com.ambulanceos.entity.Emergency;
+import com.ambulanceos.exception.AmbulanceNotFoundException;
+import com.ambulanceos.exception.DispatchNotFoundException;
+import com.ambulanceos.exception.EmergencyNotFoundException;
+import com.ambulanceos.exception.NoAvailableAmbulanceException;
 import com.ambulanceos.graph.GraphNode;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import com.ambulanceos.repository.AmbulanceRepository;
@@ -12,6 +16,7 @@ import com.ambulanceos.repository.DispatchRepository;
 import com.ambulanceos.repository.EmergencyRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -30,17 +35,8 @@ public class DispatchService {
 
     private final GurgaonRoadGraph roadGraph;
 
-    /*
-     * Central routing gateway.
-     *
-     * RoutingService automatically uses the algorithm selected
-     * in the system settings:
-     *
-     * DIJKSTRA
-     * or
-     * ASTAR
-     */
-    private final RoutingService routingService;
+    private final TrafficAwareDijkstraService
+            trafficAwareDijkstraService;
 
 
     // =========================================================
@@ -49,41 +45,36 @@ public class DispatchService {
     //
     // Finds the fastest reachable AVAILABLE ambulance.
     //
-    // Process:
+    // The AVAILABLE ambulance rows are locked using a
+    // database-level PESSIMISTIC_WRITE lock.
     //
-    // 1. Find emergency
-    // 2. Find nearest graph node
-    // 3. Get AVAILABLE ambulances
-    // 4. Calculate route for every ambulance
-    // 5. Store candidates in PriorityQueue
-    // 6. Select ambulance with minimum travel time
-    //
-    // RoutingService decides whether Dijkstra or A* is used.
+    // This is important because ambulance selection and status
+    // update must not race with another dispatch request.
     //
     // =========================================================
 
+    @Transactional
     public DispatchResponse findBestAmbulance(
             Long emergencyId
     ) {
 
-        // =====================================================
+        // -----------------------------------------------------
         // 1. FIND EMERGENCY
-        // =====================================================
+        // -----------------------------------------------------
 
         Emergency emergency =
                 emergencyRepository.findById(
                         emergencyId
                 ).orElseThrow(() ->
-                        new RuntimeException(
-                                "Emergency not found with id: "
-                                        + emergencyId
+                        new EmergencyNotFoundException(
+                                emergencyId
                         )
                 );
 
 
-        // =====================================================
+        // -----------------------------------------------------
         // 2. FIND NEAREST GRAPH NODE FOR EMERGENCY
-        // =====================================================
+        // -----------------------------------------------------
 
         GraphNode emergencyNode =
                 roadGraph.findNearestNode(
@@ -94,45 +85,48 @@ public class DispatchService {
 
         if (emergencyNode == null) {
 
-            throw new RuntimeException(
+            throw new NoAvailableAmbulanceException(
                     "Unable to find road node near emergency"
             );
         }
 
 
-        // =====================================================
-        // 3. GET AVAILABLE AMBULANCES
-        // =====================================================
+        // -----------------------------------------------------
+        // 3. GET AVAILABLE AMBULANCES WITH DATABASE LOCK
+        // -----------------------------------------------------
+        //
+        // IMPORTANT:
+        //
+        // AmbulanceRepository uses:
+        //
+        // @Lock(PESSIMISTIC_WRITE)
+        //
+        // Therefore PostgreSQL locks these rows until the
+        // surrounding transaction completes.
+        //
+        // -----------------------------------------------------
 
         List<Ambulance> availableAmbulances =
-                ambulanceRepository.findAll()
-                        .stream()
-                        .filter(ambulance ->
-                                "AVAILABLE".equalsIgnoreCase(
-                                        ambulance.getStatus()
-                                )
-                        )
-                        .toList();
+                ambulanceRepository.findByStatusIgnoreCase(
+                        "AVAILABLE"
+                );
 
 
         if (availableAmbulances.isEmpty()) {
 
-            throw new RuntimeException(
+            throw new NoAvailableAmbulanceException(
                     "No available ambulance found"
             );
         }
 
 
-        // =====================================================
+        // -----------------------------------------------------
         // 4. PRIORITY QUEUE
-        // =====================================================
+        // -----------------------------------------------------
         //
         // Lower travel time = higher priority.
         //
-        // PriorityQueue is the main DSA component used
-        // for ambulance selection.
-        //
-        // =====================================================
+        // -----------------------------------------------------
 
         PriorityQueue<AmbulanceDistance> priorityQueue =
                 new PriorityQueue<>(
@@ -142,9 +136,9 @@ public class DispatchService {
                 );
 
 
-        // =====================================================
+        // -----------------------------------------------------
         // 5. CALCULATE ROUTE FOR EACH AMBULANCE
-        // =====================================================
+        // -----------------------------------------------------
 
         for (Ambulance ambulance :
                 availableAmbulances) {
@@ -169,21 +163,12 @@ public class DispatchService {
 
             try {
 
-                // -------------------------------------------------
-                // RoutingService automatically selects:
-                //
-                // Traffic-aware Dijkstra
-                //
-                // OR
-                //
-                // A*
-                // -------------------------------------------------
-
                 TrafficDijkstraResponse route =
-                        routingService.findRoute(
-                                ambulanceNode.id(),
-                                emergencyNode.id()
-                        );
+                        trafficAwareDijkstraService
+                                .findShortestPath(
+                                        ambulanceNode.id(),
+                                        emergencyNode.id()
+                                );
 
 
                 priorityQueue.offer(
@@ -195,12 +180,13 @@ public class DispatchService {
                         )
                 );
 
-
             } catch (RuntimeException exception) {
 
                 // -------------------------------------------------
-                // Ambulance may be present in the database but
-                // unreachable in the road graph.
+                // Ambulance exists but may be unreachable in the
+                // road graph.
+                //
+                // Skip it and continue checking other ambulances.
                 // -------------------------------------------------
 
                 System.out.println(
@@ -213,21 +199,21 @@ public class DispatchService {
         }
 
 
-        // =====================================================
+        // -----------------------------------------------------
         // 6. CHECK WHETHER ANY AMBULANCE IS REACHABLE
-        // =====================================================
+        // -----------------------------------------------------
 
         if (priorityQueue.isEmpty()) {
 
-            throw new RuntimeException(
+            throw new NoAvailableAmbulanceException(
                     "No reachable available ambulance found"
             );
         }
 
 
-        // =====================================================
+        // -----------------------------------------------------
         // 7. GET FASTEST AMBULANCE
-        // =====================================================
+        // -----------------------------------------------------
 
         AmbulanceDistance best =
                 priorityQueue.poll();
@@ -236,9 +222,9 @@ public class DispatchService {
                 best.ambulance();
 
 
-        // =====================================================
+        // -----------------------------------------------------
         // 8. RETURN RESULT
-        // =====================================================
+        // -----------------------------------------------------
 
         return new DispatchResponse(
 
@@ -275,17 +261,23 @@ public class DispatchService {
     //      ↓
     // EN_ROUTE
     //
-    // Persistent Dispatch history is created by
-    // DispatchPlanService.
+    // The whole operation runs inside one transaction.
+    //
+    // Therefore the database lock acquired during ambulance
+    // selection remains active until the status update commits.
     //
     // =========================================================
 
+    @Transactional
     public DispatchResponse dispatchAmbulance(
             Long emergencyId
     ) {
 
         // -----------------------------------------------------
-        // Find best ambulance
+        // Find best ambulance.
+        //
+        // The database lock acquired by findBestAmbulance()
+        // participates in the same transaction.
         // -----------------------------------------------------
 
         DispatchResponse bestAmbulance =
@@ -302,10 +294,32 @@ public class DispatchService {
                 ambulanceRepository.findById(
                         bestAmbulance.ambulanceId()
                 ).orElseThrow(() ->
-                        new RuntimeException(
-                                "Selected ambulance not found"
+                        new AmbulanceNotFoundException(
+                                bestAmbulance.ambulanceId()
                         )
                 );
+
+
+        // -----------------------------------------------------
+        // Defensive status check
+        // -----------------------------------------------------
+        //
+        // Normally this should always be AVAILABLE because
+        // findBestAmbulance() selected it while holding the
+        // database lock.
+        //
+        // This check provides an additional safety layer.
+        //
+        // -----------------------------------------------------
+
+        if (!"AVAILABLE".equalsIgnoreCase(
+                ambulance.getStatus()
+        )) {
+
+            throw new NoAvailableAmbulanceException(
+                    "Selected ambulance is no longer available"
+            );
+        }
 
 
         // -----------------------------------------------------
@@ -354,51 +368,48 @@ public class DispatchService {
     }
 
 
-    // =========================================================
-    // COMPLETE DISPATCH
-    // =========================================================
-    //
-    // Dispatch lifecycle:
-    //
-    // IN_PROGRESS
-    //       ↓
-    // COMPLETED
-    //
-    // completedAt is also stored.
-    //
-    // Ambulance lifecycle:
-    //
-    // EN_ROUTE
-    //       ↓
-    // AVAILABLE
-    //
-    // Once the dispatch is completed, the ambulance is
-    // automatically released and can handle another emergency.
-    //
-    // =========================================================
+// =========================================================
+// COMPLETE DISPATCH
+// =========================================================
+//
+// IN_PROGRESS
+//       ↓
+// COMPLETED
+//
+// At the same time:
+//
+// Ambulance EN_ROUTE
+//       ↓
+// AVAILABLE
+//
+// Both changes happen inside one transaction so the database
+// does not end up with a completed dispatch whose ambulance
+// is still marked as busy.
+//
+// =========================================================
 
+    @Transactional
     public Dispatch completeDispatch(
             Long dispatchId
     ) {
 
-        // =====================================================
+        // ---------------------------------------------------------
         // 1. FIND DISPATCH
-        // =====================================================
+        // ---------------------------------------------------------
 
         Dispatch dispatch =
                 dispatchRepository.findById(
                         dispatchId
                 ).orElseThrow(() ->
-                        new RuntimeException(
-                                "Dispatch not found with id: "
-                                        + dispatchId
+                        new DispatchNotFoundException(
+                                dispatchId
                         )
                 );
 
 
-        // =====================================================
+        // ---------------------------------------------------------
         // 2. PREVENT DUPLICATE COMPLETION
-        // =====================================================
+        // ---------------------------------------------------------
 
         if ("COMPLETED".equalsIgnoreCase(
                 dispatch.getStatus()
@@ -408,62 +419,60 @@ public class DispatchService {
         }
 
 
-        // =====================================================
-        // 3. UPDATE DISPATCH STATUS
-        // =====================================================
-
-        dispatch.setStatus(
-                "COMPLETED"
-        );
-
-
-        // =====================================================
-        // 4. STORE COMPLETION TIMESTAMP
-        // =====================================================
-
-        dispatch.setCompletedAt(
-                LocalDateTime.now()
-        );
-
-
-        // =====================================================
-        // 5. FIND AMBULANCE USED BY THIS DISPATCH
-        // =====================================================
+        // ---------------------------------------------------------
+        // 3. FIND ASSIGNED AMBULANCE
+        // ---------------------------------------------------------
 
         Ambulance ambulance =
                 ambulanceRepository.findById(
                         dispatch.getAmbulanceId()
                 ).orElseThrow(() ->
-                        new RuntimeException(
-                                "Ambulance not found for dispatch: "
-                                        + dispatchId
+                        new AmbulanceNotFoundException(
+                                dispatch.getAmbulanceId()
                         )
                 );
 
 
-        // =====================================================
-        // 6. RELEASE AMBULANCE
+        // ---------------------------------------------------------
+        // 4. RETURN AMBULANCE TO AVAILABLE STATE
+        // ---------------------------------------------------------
         //
         // EN_ROUTE → AVAILABLE
-        // =====================================================
+        //
+        // The ambulance is now eligible for another emergency.
+        //
+        // ---------------------------------------------------------
 
         ambulance.setStatus(
                 "AVAILABLE"
         );
-
-
-        // =====================================================
-        // 7. SAVE UPDATED AMBULANCE
-        // =====================================================
 
         ambulanceRepository.save(
                 ambulance
         );
 
 
-        // =====================================================
-        // 8. SAVE COMPLETED DISPATCH
-        // =====================================================
+        // ---------------------------------------------------------
+        // 5. COMPLETE DISPATCH
+        // ---------------------------------------------------------
+
+        dispatch.setStatus(
+                "COMPLETED"
+        );
+
+
+        // ---------------------------------------------------------
+        // 6. STORE COMPLETION TIMESTAMP
+        // ---------------------------------------------------------
+
+        dispatch.setCompletedAt(
+                LocalDateTime.now()
+        );
+
+
+        // ---------------------------------------------------------
+        // 7. SAVE COMPLETED DISPATCH
+        // ---------------------------------------------------------
 
         return dispatchRepository.save(
                 dispatch

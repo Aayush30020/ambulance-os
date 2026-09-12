@@ -4,6 +4,8 @@ import com.ambulanceos.dto.HospitalSelectionResponse;
 import com.ambulanceos.dto.TrafficDijkstraResponse;
 import com.ambulanceos.entity.Emergency;
 import com.ambulanceos.entity.Hospital;
+import com.ambulanceos.exception.EmergencyNotFoundException;
+import com.ambulanceos.exception.NoSuitableHospitalException;
 import com.ambulanceos.graph.GraphNode;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import com.ambulanceos.repository.EmergencyRepository;
@@ -28,8 +30,13 @@ public class HospitalSelectionService {
     /*
      * Central routing service.
      *
-     * This automatically uses whichever routing algorithm
-     * is currently selected in Settings.
+     * RoutingService decides which routing algorithm is used:
+     *
+     *      Traffic-Aware Dijkstra
+     *              OR
+     *             A*
+     *
+     * based on the current routing configuration.
      */
     private final RoutingService routingService;
 
@@ -76,15 +83,19 @@ public class HospitalSelectionService {
                 emergencyRepository.findById(
                         emergencyId
                 ).orElseThrow(() ->
-                        new RuntimeException(
-                                "Emergency not found with id: "
-                                        + emergencyId
+                        new EmergencyNotFoundException(
+                                emergencyId
                         )
                 );
 
 
         // =====================================================
         // 2. FIND EMERGENCY GRAPH NODE
+        // =====================================================
+        //
+        // The emergency coordinates are mapped to the nearest
+        // actual road node in the Gurgaon OSM graph.
+        //
         // =====================================================
 
         GraphNode emergencyNode =
@@ -96,8 +107,8 @@ public class HospitalSelectionService {
 
         if (emergencyNode == null) {
 
-            throw new RuntimeException(
-                    "Unable to find road node near emergency"
+            throw new NoSuitableHospitalException(
+                    "Unable to find a road node near the emergency"
             );
         }
 
@@ -114,10 +125,12 @@ public class HospitalSelectionService {
         // 4. CREATE PRIORITY QUEUE
         // =====================================================
         //
-        // Primary:
-        //     Lowest travel time
+        // Primary priority:
         //
-        // Secondary:
+        //     Lowest traffic-adjusted travel time
+        //
+        // Secondary priority:
+        //
         //     More available beds
         //
         // =====================================================
@@ -195,22 +208,23 @@ public class HospitalSelectionService {
             }
 
 
-            try {
+            // =================================================
+            // 5D. ROUTE EMERGENCY → HOSPITAL
+            // =================================================
+            //
+            // RoutingService determines the active algorithm.
+            //
+            // If Settings = DIJKSTRA:
+            //
+            //     Traffic-Aware Dijkstra
+            //
+            // If Settings = ASTAR:
+            //
+            //     A*
+            //
+            // =================================================
 
-                // =================================================
-                // 5D. ROUTE EMERGENCY → HOSPITAL
-                // =================================================
-                //
-                // RoutingService reads the current algorithm
-                // from PostgreSQL.
-                //
-                // DIJKSTRA:
-                //     Traffic-aware Dijkstra
-                //
-                // ASTAR:
-                //     A*
-                //
-                // =================================================
+            try {
 
                 TrafficDijkstraResponse route =
                         routingService.findRoute(
@@ -232,11 +246,14 @@ public class HospitalSelectionService {
                         )
                 );
 
-
             } catch (RuntimeException exception) {
 
                 // -------------------------------------------------
-                // Skip unreachable hospitals.
+                // The hospital may exist in the database but may
+                // not be reachable through the road graph.
+                //
+                // We skip that hospital and continue checking
+                // the remaining hospitals.
                 // -------------------------------------------------
 
                 System.out.println(
@@ -255,7 +272,7 @@ public class HospitalSelectionService {
 
         if (priorityQueue.isEmpty()) {
 
-            throw new RuntimeException(
+            throw new NoSuitableHospitalException(
                     "No reachable hospital found with required "
                             + "facility and available beds"
             );
@@ -264,6 +281,13 @@ public class HospitalSelectionService {
 
         // =====================================================
         // 7. SELECT BEST HOSPITAL
+        // =====================================================
+        //
+        // PriorityQueue gives:
+        //
+        // 1. Fastest traffic-adjusted route
+        // 2. More beds when travel times are equal
+        //
         // =====================================================
 
         HospitalDistance best =
@@ -378,6 +402,14 @@ public class HospitalSelectionService {
     // =========================================================
     // FACILITY MATCHING
     // =========================================================
+    //
+    // TRAUMA emergency → TRAUMA hospital
+    //
+    // ICU emergency → ICU hospital
+    //
+    // GENERAL emergency → Any hospital
+    //
+    // =========================================================
 
     private boolean facilityMatches(
 
@@ -452,6 +484,10 @@ public class HospitalSelectionService {
 
     // =========================================================
     // PRIORITY QUEUE ELEMENT
+    // =========================================================
+    //
+    // Stores the information required to rank hospitals.
+    //
     // =========================================================
 
     private record HospitalDistance(

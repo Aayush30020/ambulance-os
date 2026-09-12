@@ -9,6 +9,10 @@ import com.ambulanceos.entity.Ambulance;
 import com.ambulanceos.entity.Dispatch;
 import com.ambulanceos.entity.Emergency;
 import com.ambulanceos.entity.Hospital;
+import com.ambulanceos.exception.AmbulanceNotFoundException;
+import com.ambulanceos.exception.EmergencyNotFoundException;
+import com.ambulanceos.exception.HospitalNotFoundException;
+import com.ambulanceos.exception.RouteNotFoundException;
 import com.ambulanceos.graph.GraphNode;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import com.ambulanceos.repository.AmbulanceRepository;
@@ -46,18 +50,14 @@ public class DispatchPlanService {
     /*
      * Central routing gateway.
      *
-     * RoutingService automatically uses the algorithm
-     * currently selected in PostgreSQL:
-     *
-     * DIJKSTRA
-     * or
-     * ASTAR
+     * The selected algorithm is read from the routing settings
+     * and then explicitly passed to the routing engine so that
+     * every route in this dispatch uses the same algorithm.
      */
     private final RoutingService routingService;
 
     /*
-     * Used to store the exact algorithm that was selected
-     * when this dispatch was created.
+     * Provides the currently selected routing algorithm.
      */
     private final RoutingSettingsService routingSettingsService;
 
@@ -67,50 +67,40 @@ public class DispatchPlanService {
     // =========================================================
 
     @Transactional
-    public DispatchPlanResponse createDispatchPlan(
-            Long emergencyId
-    ) {
+    public DispatchPlanResponse createDispatchPlan(Long emergencyId) {
 
         // =====================================================
         // 1. FIND EMERGENCY
         // =====================================================
 
         Emergency emergency =
-                emergencyRepository.findById(
-                        emergencyId
-                ).orElseThrow(() ->
-                        new RuntimeException(
-                                "Emergency not found with id: "
-                                        + emergencyId
-                        )
-                );
+                emergencyRepository.findById(emergencyId)
+                        .orElseThrow(() ->
+                                new EmergencyNotFoundException(
+                                        emergencyId
+                                )
+                        );
 
 
         // =====================================================
         // 2. GET CURRENT ROUTING ALGORITHM
         // =====================================================
         //
-        // The selected algorithm is read once at the beginning
-        // of the dispatch.
-        //
-        // This ensures that the dispatch record stores the
-        // algorithm that was actually selected for this trip.
+        // Read the algorithm once at the beginning of the
+        // dispatch so the entire trip uses the same algorithm.
         //
         // =====================================================
 
         RoutingAlgorithm selectedAlgorithm =
-                routingSettingsService
-                        .getRoutingAlgorithm();
+                routingSettingsService.getRoutingAlgorithm();
 
 
         // =====================================================
         // 3. FIND BEST AVAILABLE AMBULANCE
         // =====================================================
         //
-        // DispatchService uses RoutingService internally.
-        //
-        // Therefore it uses the same routing algorithm selected
-        // in Settings.
+        // DispatchService performs ambulance selection using
+        // the routing system.
         //
         // =====================================================
 
@@ -128,8 +118,8 @@ public class DispatchPlanService {
                 ambulanceRepository.findById(
                         ambulanceResponse.ambulanceId()
                 ).orElseThrow(() ->
-                        new RuntimeException(
-                                "Selected ambulance not found"
+                        new AmbulanceNotFoundException(
+                                ambulanceResponse.ambulanceId()
                         )
                 );
 
@@ -138,10 +128,8 @@ public class DispatchPlanService {
         // 5. FIND BEST SUITABLE HOSPITAL
         // =====================================================
         //
-        // HospitalSelectionService also uses RoutingService.
-        //
-        // Therefore hospital selection uses the same selected
-        // routing algorithm.
+        // HospitalSelectionService filters hospitals by
+        // suitability, available beds and route time.
         //
         // =====================================================
 
@@ -159,8 +147,8 @@ public class DispatchPlanService {
                 hospitalRepository.findById(
                         hospitalResponse.hospitalId()
                 ).orElseThrow(() ->
-                        new RuntimeException(
-                                "Selected hospital not found"
+                        new HospitalNotFoundException(
+                                hospitalResponse.hospitalId()
                         )
                 );
 
@@ -178,8 +166,9 @@ public class DispatchPlanService {
 
         if (ambulanceNode == null) {
 
-            throw new RuntimeException(
-                    "Unable to find road node near ambulance"
+            throw new RouteNotFoundException(
+                    "Unable to find road node near ambulance "
+                            + ambulance.getAmbulanceNumber()
             );
         }
 
@@ -197,8 +186,9 @@ public class DispatchPlanService {
 
         if (emergencyNode == null) {
 
-            throw new RuntimeException(
-                    "Unable to find road node near emergency"
+            throw new RouteNotFoundException(
+                    "Unable to find road node near emergency "
+                            + emergency.getId()
             );
         }
 
@@ -207,21 +197,29 @@ public class DispatchPlanService {
         // 9. AMBULANCE → EMERGENCY
         // =====================================================
         //
-        // IMPORTANT:
-        //
-        // We use the selected algorithm explicitly here.
-        //
-        // This guarantees that the actual trip route uses
-        // the same algorithm selected for this dispatch.
+        // Explicitly use the algorithm selected for this
+        // dispatch.
         //
         // =====================================================
 
-        TrafficDijkstraResponse ambulanceToEmergency =
-                routingService.findRoute(
-                        ambulanceNode.id(),
-                        emergencyNode.id(),
-                        selectedAlgorithm
-                );
+        TrafficDijkstraResponse ambulanceToEmergency;
+
+        try {
+
+            ambulanceToEmergency =
+                    routingService.findRoute(
+                            ambulanceNode.id(),
+                            emergencyNode.id(),
+                            selectedAlgorithm
+                    );
+
+        } catch (RuntimeException ex) {
+
+            throw new RouteNotFoundException(
+                    "Unable to calculate route from ambulance to emergency: "
+                            + ex.getMessage()
+            );
+        }
 
 
         // =====================================================
@@ -247,8 +245,9 @@ public class DispatchPlanService {
 
         if (hospitalNode == null) {
 
-            throw new RuntimeException(
-                    "Unable to find road node near hospital"
+            throw new RouteNotFoundException(
+                    "Unable to find road node near hospital "
+                            + hospital.getHospitalCode()
             );
         }
 
@@ -262,12 +261,24 @@ public class DispatchPlanService {
         //
         // =====================================================
 
-        TrafficDijkstraResponse emergencyToHospital =
-                routingService.findRoute(
-                        emergencyNode.id(),
-                        hospitalNode.id(),
-                        selectedAlgorithm
-                );
+        TrafficDijkstraResponse emergencyToHospital;
+
+        try {
+
+            emergencyToHospital =
+                    routingService.findRoute(
+                            emergencyNode.id(),
+                            hospitalNode.id(),
+                            selectedAlgorithm
+                    );
+
+        } catch (RuntimeException ex) {
+
+            throw new RouteNotFoundException(
+                    "Unable to calculate route from emergency to hospital: "
+                            + ex.getMessage()
+            );
+        }
 
 
         // =====================================================
@@ -284,8 +295,9 @@ public class DispatchPlanService {
         // 14. CURRENT AMBULANCE → HOSPITAL ROUTE
         // =====================================================
         //
-        // RouteService is still used because RouteDetails is
-        // part of the existing frontend response.
+        // RouteService is retained because RouteDetails is part
+        // of the existing DispatchPlanResponse used by the
+        // frontend.
         //
         // =====================================================
 
@@ -302,9 +314,7 @@ public class DispatchPlanService {
         // AVAILABLE → EN_ROUTE
         // =====================================================
 
-        ambulance.setStatus(
-                "EN_ROUTE"
-        );
+        ambulance.setStatus("EN_ROUTE");
 
         ambulance =
                 ambulanceRepository.save(
@@ -314,14 +324,6 @@ public class DispatchPlanService {
 
         // =====================================================
         // 16. CREATE PERSISTENT DISPATCH RECORD
-        // =====================================================
-        //
-        // The actual selected algorithm is stored here.
-        //
-        // DIJKSTRA
-        // or
-        // ASTAR
-        //
         // =====================================================
 
         Dispatch dispatch =
@@ -371,16 +373,14 @@ public class DispatchPlanService {
 
                         .totalDistanceKm(
                                 routeToEmergency.distanceKm()
-                                        +
-                                        routeToHospital.distanceKm()
+                                        + routeToHospital.distanceKm()
                         )
 
                         .totalEstimatedTimeMinutes(
                                 routeToEmergency
                                         .estimatedTravelTimeMinutes()
-                                        +
-                                        routeToHospital
-                                                .estimatedTravelTimeMinutes()
+                                        + routeToHospital
+                                        .estimatedTravelTimeMinutes()
                         )
 
                         .status(
@@ -489,6 +489,26 @@ public class DispatchPlanService {
             TrafficDijkstraResponse response
     ) {
 
+        // -----------------------------------------------------
+        // Defensive check for an invalid routing response.
+        // -----------------------------------------------------
+
+        if (response == null) {
+
+            throw new RouteNotFoundException(
+                    "Routing engine returned no route"
+            );
+        }
+
+        if (response.path() == null ||
+                response.path().isEmpty()) {
+
+            throw new RouteNotFoundException(
+                    "Routing engine returned an empty route"
+            );
+        }
+
+
         List<TripRoute.RoutePoint> coordinates =
                 new ArrayList<>();
 
@@ -501,14 +521,12 @@ public class DispatchPlanService {
                 response.path()) {
 
             GraphNode node =
-                    roadGraph.getNode(
-                            nodeId
-                    );
+                    roadGraph.getNode(nodeId);
 
 
             if (node == null) {
 
-                throw new RuntimeException(
+                throw new RouteNotFoundException(
                         "Route node not found: "
                                 + nodeId
                 );

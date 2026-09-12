@@ -1,6 +1,7 @@
 package com.ambulanceos.controller;
 
 import com.ambulanceos.entity.Dispatch;
+import com.ambulanceos.exception.DispatchNotFoundException;
 import com.ambulanceos.repository.DispatchRepository;
 import com.ambulanceos.service.DispatchService;
 import lombok.RequiredArgsConstructor;
@@ -42,9 +43,8 @@ public class DispatchHistoryController {
         return dispatchRepository
                 .findById(id)
                 .orElseThrow(() ->
-                        new RuntimeException(
-                                "Dispatch not found with id: "
-                                        + id
+                        new DispatchNotFoundException(
+                                id
                         )
                 );
     }

@@ -3,6 +3,7 @@ package com.ambulanceos.service;
 import com.ambulanceos.dto.EmergencyRequest;
 import com.ambulanceos.dto.EmergencyResponse;
 import com.ambulanceos.entity.Emergency;
+import com.ambulanceos.exception.EmergencyNotFoundException;
 import com.ambulanceos.repository.EmergencyRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -16,45 +17,107 @@ public class EmergencyService {
 
     private final EmergencyRepository emergencyRepository;
 
-    public EmergencyResponse createEmergency(EmergencyRequest request) {
 
-        Emergency emergency = Emergency.builder()
-                .location(request.location())
-                .latitude(request.latitude())
-                .longitude(request.longitude())
-                .priority(request.priority())
-                .facility(request.facility())
-                .notes(request.notes())
-                .status("ACTIVE")
-                .createdAt(LocalDateTime.now())
-                .build();
+    // =========================================================
+    // CREATE EMERGENCY
+    // =========================================================
+
+    public EmergencyResponse createEmergency(
+            EmergencyRequest request
+    ) {
+
+        Emergency emergency =
+                Emergency.builder()
+
+                        .location(
+                                request.location()
+                        )
+
+                        .latitude(
+                                request.latitude()
+                        )
+
+                        .longitude(
+                                request.longitude()
+                        )
+
+                        .priority(
+                                request.priority()
+                        )
+
+                        .facility(
+                                request.facility()
+                        )
+
+                        .notes(
+                                request.notes()
+                        )
+
+                        .status(
+                                "ACTIVE"
+                        )
+
+                        .createdAt(
+                                LocalDateTime.now()
+                        )
+
+                        .build();
+
 
         Emergency savedEmergency =
-                emergencyRepository.save(emergency);
+                emergencyRepository.save(
+                        emergency
+                );
 
-        return mapToResponse(savedEmergency);
+
+        return mapToResponse(
+                savedEmergency
+        );
     }
 
-    public List<EmergencyResponse> getAllEmergencies() {
-        return emergencyRepository.findAll()
+
+    // =========================================================
+    // GET ALL EMERGENCIES
+    // =========================================================
+
+    public List<EmergencyResponse>
+    getAllEmergencies() {
+
+        return emergencyRepository
+                .findAll()
                 .stream()
                 .map(this::mapToResponse)
                 .toList();
     }
 
-    public EmergencyResponse getEmergencyById(Long id) {
+
+    // =========================================================
+    // GET EMERGENCY BY ID
+    // =========================================================
+
+    public EmergencyResponse getEmergencyById(
+            Long id
+    ) {
 
         Emergency emergency =
-                emergencyRepository.findById(id)
+                emergencyRepository
+                        .findById(id)
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Emergency not found with id: "
-                                                + id
+                                new EmergencyNotFoundException(
+                                        id
                                 )
                         );
 
-        return mapToResponse(emergency);
+
+        return mapToResponse(
+                emergency
+        );
     }
+
+
+    // =========================================================
+    // UPDATE EMERGENCY STATUS
+    // =========================================================
 
     public EmergencyResponse updateStatus(
             Long id,
@@ -62,32 +125,69 @@ public class EmergencyService {
     ) {
 
         Emergency emergency =
-                emergencyRepository.findById(id)
+                emergencyRepository
+                        .findById(id)
                         .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Emergency not found with id: "
-                                                + id
+                                new EmergencyNotFoundException(
+                                        id
                                 )
                         );
 
-        emergency.setStatus(status);
+
+        if (
+                status == null
+                        || status.isBlank()
+        ) {
+
+            throw new IllegalArgumentException(
+                    "Emergency status cannot be empty"
+            );
+        }
+
+
+        emergency.setStatus(
+                status.toUpperCase()
+        );
+
 
         Emergency updatedEmergency =
-                emergencyRepository.save(emergency);
+                emergencyRepository.save(
+                        emergency
+                );
 
-        return mapToResponse(updatedEmergency);
+
+        return mapToResponse(
+                updatedEmergency
+        );
     }
 
-    private EmergencyResponse mapToResponse(Emergency emergency) {
+
+    // =========================================================
+    // MAP ENTITY → RESPONSE
+    // =========================================================
+
+    private EmergencyResponse mapToResponse(
+            Emergency emergency
+    ) {
+
         return new EmergencyResponse(
+
                 emergency.getId(),
+
                 emergency.getLocation(),
+
                 emergency.getLatitude(),
+
                 emergency.getLongitude(),
+
                 emergency.getPriority(),
+
                 emergency.getFacility(),
+
                 emergency.getNotes(),
+
                 emergency.getStatus(),
+
                 emergency.getCreatedAt()
         );
     }
