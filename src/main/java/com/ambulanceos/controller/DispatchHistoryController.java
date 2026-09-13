@@ -22,6 +22,13 @@ public class DispatchHistoryController {
     // =========================================================
     // GET ALL DISPATCH HISTORY
     // =========================================================
+    //
+    // GET
+    // /api/dispatches
+    //
+    // Returns dispatch records ordered from newest to oldest.
+    //
+    // =========================================================
 
     @GetMapping
     public List<Dispatch> getAllDispatches() {
@@ -34,6 +41,11 @@ public class DispatchHistoryController {
     // =========================================================
     // GET DISPATCH BY ID
     // =========================================================
+    //
+    // GET
+    // /api/dispatches/{id}
+    //
+    // =========================================================
 
     @GetMapping("/{id}")
     public Dispatch getDispatchById(
@@ -43,15 +55,32 @@ public class DispatchHistoryController {
         return dispatchRepository
                 .findById(id)
                 .orElseThrow(() ->
-                        new DispatchNotFoundException(
-                                id
-                        )
+                        new DispatchNotFoundException(id)
                 );
     }
 
 
     // =========================================================
     // COMPLETE DISPATCH
+    // =========================================================
+    //
+    // PUT
+    // /api/dispatches/{id}/complete
+    //
+    // Changes:
+    //
+    // IN_PROGRESS
+    //      ↓
+    // COMPLETED
+    //
+    // Ambulance:
+    //
+    // EN_ROUTE
+    //      ↓
+    // AVAILABLE
+    //
+    // The state changes are handled by DispatchService.
+    //
     // =========================================================
 
     @PutMapping("/{id}/complete")
