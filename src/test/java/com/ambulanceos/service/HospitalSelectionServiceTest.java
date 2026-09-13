@@ -6,6 +6,7 @@ import com.ambulanceos.entity.Emergency;
 import com.ambulanceos.entity.Hospital;
 import com.ambulanceos.exception.EmergencyNotFoundException;
 import com.ambulanceos.exception.NoSuitableHospitalException;
+import com.ambulanceos.exception.RouteNotFoundException;
 import com.ambulanceos.graph.GraphNode;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import com.ambulanceos.repository.EmergencyRepository;
@@ -25,6 +26,9 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyDouble;
+import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,9 +49,11 @@ class HospitalSelectionServiceTest {
     @Mock
     private RoutingService routingService;
 
+    @Mock
+    private RoutingSettingsService routingSettingsService;
+
     @InjectMocks
     private HospitalSelectionService hospitalSelectionService;
-
 
     private Emergency emergency;
 
@@ -58,15 +64,17 @@ class HospitalSelectionServiceTest {
     private GraphNode hospitalNode2;
 
 
+    // =========================================================
+    // SETUP
+    // =========================================================
+
     @BeforeEach
     void setUp() {
 
-        emergency = org.mockito.Mockito.mock(Emergency.class);
-
-        when(emergency.getId()).thenReturn(1L);
-        when(emergency.getLatitude()).thenReturn(28.4595);
-        when(emergency.getLongitude()).thenReturn(77.0266);
-        when(emergency.getFacility()).thenReturn("TRAUMA");
+        emergency =
+                org.mockito.Mockito.mock(
+                        Emergency.class
+                );
 
         emergencyNode =
                 new GraphNode(
@@ -91,6 +99,40 @@ class HospitalSelectionServiceTest {
                         28.4500,
                         77.0400
                 );
+    }
+
+
+    // =========================================================
+    // TEST 1
+    // FASTEST SUITABLE HOSPITAL SHOULD BE SELECTED
+    // =========================================================
+
+    @Test
+    void shouldSelectFastestSuitableHospital() {
+
+        when(
+                emergency.getId()
+        ).thenReturn(
+                1L
+        );
+
+        when(
+                emergency.getLatitude()
+        ).thenReturn(
+                28.4595
+        );
+
+        when(
+                emergency.getLongitude()
+        ).thenReturn(
+                77.0266
+        );
+
+        when(
+                emergency.getFacility()
+        ).thenReturn(
+                "TRAUMA"
+        );
 
         when(
                 emergencyRepository.findById(1L)
@@ -103,48 +145,105 @@ class HospitalSelectionServiceTest {
                         28.4595,
                         77.0266
                 )
-        ).thenReturn(emergencyNode);
-    }
+        ).thenReturn(
+                emergencyNode
+        );
 
-
-    // =========================================================
-    // TEST 1
-    // =========================================================
-    //
-    // The hospital with the lowest traffic-adjusted travel time
-    // should be selected.
-    //
-    // =========================================================
-
-    @Test
-    void shouldSelectFastestSuitableHospital() {
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
 
         Hospital hospital1 =
-                org.mockito.Mockito.mock(Hospital.class);
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
 
         Hospital hospital2 =
-                org.mockito.Mockito.mock(Hospital.class);
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
 
-        when(hospital1.getId()).thenReturn(101L);
-        when(hospital1.getHospitalCode()).thenReturn("HOS-01");
-        when(hospital1.getName()).thenReturn("Hospital One");
-        when(hospital1.getFacilityType()).thenReturn("TRAUMA");
-        when(hospital1.getAvailableBeds()).thenReturn(10);
-        when(hospital1.getLatitude()).thenReturn(28.4600);
-        when(hospital1.getLongitude()).thenReturn(77.0300);
+        when(
+                hospital1.getHospitalCode()
+        ).thenReturn(
+                "HOS-01"
+        );
 
-        when(hospital2.getId()).thenReturn(102L);
-        when(hospital2.getHospitalCode()).thenReturn("HOS-02");
-        when(hospital2.getName()).thenReturn("Hospital Two");
-        when(hospital2.getFacilityType()).thenReturn("TRAUMA");
-        when(hospital2.getAvailableBeds()).thenReturn(15);
-        when(hospital2.getLatitude()).thenReturn(28.4500);
-        when(hospital2.getLongitude()).thenReturn(77.0400);
+        when(
+                hospital1.getName()
+        ).thenReturn(
+                "Hospital One"
+        );
+
+        when(
+                hospital1.getFacilityType()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                hospital1.getAvailableBeds()
+        ).thenReturn(
+                10
+        );
+
+        when(
+                hospital1.getLatitude()
+        ).thenReturn(
+                28.4600
+        );
+
+        when(
+                hospital1.getLongitude()
+        ).thenReturn(
+                77.0300
+        );
+
+        when(
+                hospital2.getHospitalCode()
+        ).thenReturn(
+                "HOS-02"
+        );
+
+        when(
+                hospital2.getName()
+        ).thenReturn(
+                "Hospital Two"
+        );
+
+        when(
+                hospital2.getFacilityType()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                hospital2.getAvailableBeds()
+        ).thenReturn(
+                15
+        );
+
+        when(
+                hospital2.getLatitude()
+        ).thenReturn(
+                28.4500
+        );
+
+        when(
+                hospital2.getLongitude()
+        ).thenReturn(
+                77.0400
+        );
 
         when(
                 hospitalRepository.findAll()
         ).thenReturn(
-                List.of(hospital1, hospital2)
+                List.of(
+                        hospital1,
+                        hospital2
+                )
         );
 
         when(
@@ -152,58 +251,89 @@ class HospitalSelectionServiceTest {
                         28.4600,
                         77.0300
                 )
-        ).thenReturn(hospitalNode1);
+        ).thenReturn(
+                hospitalNode1
+        );
 
         when(
                 roadGraph.findNearestNode(
                         28.4500,
                         77.0400
                 )
-        ).thenReturn(hospitalNode2);
-
+        ).thenReturn(
+                hospitalNode2
+        );
 
         TrafficDijkstraResponse fastRoute =
                 org.mockito.Mockito.mock(
                         TrafficDijkstraResponse.class
                 );
 
-        when(fastRoute.distanceKm()).thenReturn(5.0);
-        when(fastRoute.estimatedTravelTimeMinutes())
-                .thenReturn(8.0);
-        when(fastRoute.trafficLevel())
-                .thenReturn("LOW");
+        when(
+                fastRoute.distanceKm()
+        ).thenReturn(
+                5.0
+        );
 
+        when(
+                fastRoute.estimatedTravelTimeMinutes()
+        ).thenReturn(
+                8.0
+        );
+
+        when(
+                fastRoute.trafficLevel()
+        ).thenReturn(
+                "LOW"
+        );
 
         TrafficDijkstraResponse slowRoute =
                 org.mockito.Mockito.mock(
                         TrafficDijkstraResponse.class
                 );
 
-        when(slowRoute.distanceKm()).thenReturn(8.0);
-        when(slowRoute.estimatedTravelTimeMinutes())
-                .thenReturn(15.0);
-        when(slowRoute.trafficLevel())
-                .thenReturn("MODERATE");
+        when(
+                slowRoute.distanceKm()
+        ).thenReturn(
+                8.0
+        );
 
+        when(
+                slowRoute.estimatedTravelTimeMinutes()
+        ).thenReturn(
+                15.0
+        );
+
+        when(
+                slowRoute.trafficLevel()
+        ).thenReturn(
+                "MODERATE"
+        );
 
         when(
                 routingService.findRoute(
                         "emergency-node",
-                        "hospital-node-1"
+                        "hospital-node-1",
+                        RoutingAlgorithm.DIJKSTRA
                 )
-        ).thenReturn(fastRoute);
+        ).thenReturn(
+                fastRoute
+        );
 
         when(
                 routingService.findRoute(
                         "emergency-node",
-                        "hospital-node-2"
+                        "hospital-node-2",
+                        RoutingAlgorithm.DIJKSTRA
                 )
-        ).thenReturn(slowRoute);
-
+        ).thenReturn(
+                slowRoute
+        );
 
         HospitalSelectionResponse result =
-                hospitalSelectionService.findBestHospital(1L);
-
+                hospitalSelectionService.findBestHospital(
+                        1L
+                );
 
         assertNotNull(result);
 
@@ -241,39 +371,63 @@ class HospitalSelectionServiceTest {
 
     // =========================================================
     // TEST 2
-    // =========================================================
-    //
-    // Hospitals with zero or negative beds must be ignored.
-    //
+    // HOSPITAL WITH ZERO BEDS MUST BE IGNORED
     // =========================================================
 
     @Test
     void shouldIgnoreHospitalWithNoAvailableBeds() {
 
+        when(
+                emergency.getLatitude()
+        ).thenReturn(
+                28.4595
+        );
+
+        when(
+                emergency.getLongitude()
+        ).thenReturn(
+                77.0266
+        );
+
+        when(
+                emergencyRepository.findById(1L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        28.4595,
+                        77.0266
+                )
+        ).thenReturn(
+                emergencyNode
+        );
+
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
         Hospital unavailableHospital =
-                org.mockito.Mockito.mock(Hospital.class);
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
 
-        when(unavailableHospital.getId()).thenReturn(101L);
-        when(unavailableHospital.getHospitalCode())
-                .thenReturn("HOS-01");
-        when(unavailableHospital.getName())
-                .thenReturn("Unavailable Hospital");
-        when(unavailableHospital.getFacilityType())
-                .thenReturn("TRAUMA");
-        when(unavailableHospital.getAvailableBeds())
-                .thenReturn(0);
-        when(unavailableHospital.getLatitude())
-                .thenReturn(28.4600);
-        when(unavailableHospital.getLongitude())
-                .thenReturn(77.0300);
-
+        when(
+                unavailableHospital.getAvailableBeds()
+        ).thenReturn(
+                0
+        );
 
         when(
                 hospitalRepository.findAll()
         ).thenReturn(
-                List.of(unavailableHospital)
+                List.of(
+                        unavailableHospital
+                )
         );
-
 
         assertThrows(
                 NoSuitableHospitalException.class,
@@ -282,57 +436,88 @@ class HospitalSelectionServiceTest {
                                 .findBestHospital(1L)
         );
 
-
         verify(
                 routingService,
                 never()
         ).findRoute(
-                org.mockito.Mockito.anyString(),
-                org.mockito.Mockito.anyString()
+                anyString(),
+                anyString(),
+                any(RoutingAlgorithm.class)
         );
     }
 
 
     // =========================================================
     // TEST 3
-    // =========================================================
-    //
-    // A hospital with the wrong facility type must be ignored.
-    //
-    // Example:
-    //
-    // Emergency = TRAUMA
-    // Hospital  = CARDIAC
-    //
+    // WRONG FACILITY TYPE MUST BE IGNORED
     // =========================================================
 
     @Test
     void shouldIgnoreHospitalWithWrongFacilityType() {
 
+        when(
+                emergency.getLatitude()
+        ).thenReturn(
+                28.4595
+        );
+
+        when(
+                emergency.getLongitude()
+        ).thenReturn(
+                77.0266
+        );
+
+        when(
+                emergency.getFacility()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                emergencyRepository.findById(1L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        28.4595,
+                        77.0266
+                )
+        ).thenReturn(
+                emergencyNode
+        );
+
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
         Hospital cardiacHospital =
-                org.mockito.Mockito.mock(Hospital.class);
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
 
-        when(cardiacHospital.getId()).thenReturn(101L);
-        when(cardiacHospital.getHospitalCode())
-                .thenReturn("HOS-01");
-        when(cardiacHospital.getName())
-                .thenReturn("Cardiac Hospital");
-        when(cardiacHospital.getFacilityType())
-                .thenReturn("CARDIAC");
-        when(cardiacHospital.getAvailableBeds())
-                .thenReturn(20);
-        when(cardiacHospital.getLatitude())
-                .thenReturn(28.4600);
-        when(cardiacHospital.getLongitude())
-                .thenReturn(77.0300);
+        when(
+                cardiacHospital.getAvailableBeds()
+        ).thenReturn(
+                20
+        );
 
+        when(
+                cardiacHospital.getFacilityType()
+        ).thenReturn(
+                "CARDIAC"
+        );
 
         when(
                 hospitalRepository.findAll()
         ).thenReturn(
-                List.of(cardiacHospital)
+                List.of(
+                        cardiacHospital
+                )
         );
-
 
         assertThrows(
                 NoSuitableHospitalException.class,
@@ -341,65 +526,145 @@ class HospitalSelectionServiceTest {
                                 .findBestHospital(1L)
         );
 
-
         verify(
                 routingService,
                 never()
         ).findRoute(
-                org.mockito.Mockito.anyString(),
-                org.mockito.Mockito.anyString()
+                anyString(),
+                anyString(),
+                any(RoutingAlgorithm.class)
         );
     }
 
 
     // =========================================================
     // TEST 4
-    // =========================================================
-    //
-    // If routing fails for one hospital, that hospital should
-    // be skipped instead of causing the entire selection to fail.
-    //
+    // UNREACHABLE HOSPITAL SHOULD BE SKIPPED
     // =========================================================
 
     @Test
     void shouldSkipUnreachableHospital() {
 
+        when(
+                emergency.getId()
+        ).thenReturn(
+                1L
+        );
+
+        when(
+                emergency.getLatitude()
+        ).thenReturn(
+                28.4595
+        );
+
+        when(
+                emergency.getLongitude()
+        ).thenReturn(
+                77.0266
+        );
+
+        when(
+                emergency.getFacility()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                emergencyRepository.findById(1L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        28.4595,
+                        77.0266
+                )
+        ).thenReturn(
+                emergencyNode
+        );
+
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
         Hospital unreachableHospital =
-                org.mockito.Mockito.mock(Hospital.class);
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
 
         Hospital reachableHospital =
-                org.mockito.Mockito.mock(Hospital.class);
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
 
+        when(
+                unreachableHospital.getHospitalCode()
+        ).thenReturn(
+                "HOS-01"
+        );
 
-        when(unreachableHospital.getId()).thenReturn(101L);
-        when(unreachableHospital.getHospitalCode())
-                .thenReturn("HOS-01");
-        when(unreachableHospital.getName())
-                .thenReturn("Unreachable Hospital");
-        when(unreachableHospital.getFacilityType())
-                .thenReturn("TRAUMA");
-        when(unreachableHospital.getAvailableBeds())
-                .thenReturn(10);
-        when(unreachableHospital.getLatitude())
-                .thenReturn(28.4600);
-        when(unreachableHospital.getLongitude())
-                .thenReturn(77.0300);
+        when(
+                unreachableHospital.getFacilityType()
+        ).thenReturn(
+                "TRAUMA"
+        );
 
+        when(
+                unreachableHospital.getAvailableBeds()
+        ).thenReturn(
+                10
+        );
 
-        when(reachableHospital.getId()).thenReturn(102L);
-        when(reachableHospital.getHospitalCode())
-                .thenReturn("HOS-02");
-        when(reachableHospital.getName())
-                .thenReturn("Reachable Hospital");
-        when(reachableHospital.getFacilityType())
-                .thenReturn("TRAUMA");
-        when(reachableHospital.getAvailableBeds())
-                .thenReturn(12);
-        when(reachableHospital.getLatitude())
-                .thenReturn(28.4500);
-        when(reachableHospital.getLongitude())
-                .thenReturn(77.0400);
+        when(
+                unreachableHospital.getLatitude()
+        ).thenReturn(
+                28.4600
+        );
 
+        when(
+                unreachableHospital.getLongitude()
+        ).thenReturn(
+                77.0300
+        );
+
+        when(
+                reachableHospital.getHospitalCode()
+        ).thenReturn(
+                "HOS-02"
+        );
+
+        when(
+                reachableHospital.getName()
+        ).thenReturn(
+                "Reachable Hospital"
+        );
+
+        when(
+                reachableHospital.getFacilityType()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                reachableHospital.getAvailableBeds()
+        ).thenReturn(
+                12
+        );
+
+        when(
+                reachableHospital.getLatitude()
+        ).thenReturn(
+                28.4500
+        );
+
+        when(
+                reachableHospital.getLongitude()
+        ).thenReturn(
+                77.0400
+        );
 
         when(
                 hospitalRepository.findAll()
@@ -410,58 +675,73 @@ class HospitalSelectionServiceTest {
                 )
         );
 
-
         when(
                 roadGraph.findNearestNode(
                         28.4600,
                         77.0300
                 )
-        ).thenReturn(hospitalNode1);
+        ).thenReturn(
+                hospitalNode1
+        );
 
         when(
                 roadGraph.findNearestNode(
                         28.4500,
                         77.0400
                 )
-        ).thenReturn(hospitalNode2);
-
+        ).thenReturn(
+                hospitalNode2
+        );
 
         when(
                 routingService.findRoute(
                         "emergency-node",
-                        "hospital-node-1"
+                        "hospital-node-1",
+                        RoutingAlgorithm.DIJKSTRA
                 )
         ).thenThrow(
-                new RuntimeException("No route available")
+                new RouteNotFoundException(
+                        "No route available"
+                )
         );
-
 
         TrafficDijkstraResponse reachableRoute =
                 org.mockito.Mockito.mock(
                         TrafficDijkstraResponse.class
                 );
 
-        when(reachableRoute.distanceKm())
-                .thenReturn(6.5);
+        when(
+                reachableRoute.distanceKm()
+        ).thenReturn(
+                6.5
+        );
 
-        when(reachableRoute.estimatedTravelTimeMinutes())
-                .thenReturn(11.0);
+        when(
+                reachableRoute.estimatedTravelTimeMinutes()
+        ).thenReturn(
+                11.0
+        );
 
-        when(reachableRoute.trafficLevel())
-                .thenReturn("MODERATE");
-
+        when(
+                reachableRoute.trafficLevel()
+        ).thenReturn(
+                "MODERATE"
+        );
 
         when(
                 routingService.findRoute(
                         "emergency-node",
-                        "hospital-node-2"
+                        "hospital-node-2",
+                        RoutingAlgorithm.DIJKSTRA
                 )
-        ).thenReturn(reachableRoute);
-
+        ).thenReturn(
+                reachableRoute
+        );
 
         HospitalSelectionResponse result =
-                hospitalSelectionService.findBestHospital(1L);
-
+                hospitalSelectionService.findBestHospital(
+                        1L
+                );
 
         assertNotNull(result);
 
@@ -479,68 +759,126 @@ class HospitalSelectionServiceTest {
 
     // =========================================================
     // TEST 5
-    // =========================================================
-    //
-    // If two hospitals have exactly the same travel time,
-    // the hospital with MORE available beds should win.
-    //
-    // This verifies the PriorityQueue secondary comparator.
-    //
+    // MORE BEDS SHOULD WIN WHEN TRAVEL TIME IS EQUAL
     // =========================================================
 
     @Test
     void shouldPreferHospitalWithMoreBedsWhenTravelTimeIsEqual() {
 
+        when(
+                emergency.getId()
+        ).thenReturn(
+                1L
+        );
+
+        when(
+                emergency.getLatitude()
+        ).thenReturn(
+                28.4595
+        );
+
+        when(
+                emergency.getLongitude()
+        ).thenReturn(
+                77.0266
+        );
+
+        when(
+                emergency.getFacility()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                emergencyRepository.findById(1L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        28.4595,
+                        77.0266
+                )
+        ).thenReturn(
+                emergencyNode
+        );
+
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
         Hospital hospitalWithFewerBeds =
-                org.mockito.Mockito.mock(Hospital.class);
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
 
         Hospital hospitalWithMoreBeds =
-                org.mockito.Mockito.mock(Hospital.class);
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
 
+        when(
+                hospitalWithFewerBeds.getHospitalCode()
+        ).thenReturn(
+                "HOS-01"
+        );
 
-        when(hospitalWithFewerBeds.getId())
-                .thenReturn(101L);
+        when(
+                hospitalWithFewerBeds.getFacilityType()
+        ).thenReturn(
+                "TRAUMA"
+        );
 
-        when(hospitalWithFewerBeds.getHospitalCode())
-                .thenReturn("HOS-01");
+        when(
+                hospitalWithFewerBeds.getAvailableBeds()
+        ).thenReturn(
+                5
+        );
 
-        when(hospitalWithFewerBeds.getName())
-                .thenReturn("Hospital With Fewer Beds");
+        when(
+                hospitalWithFewerBeds.getLatitude()
+        ).thenReturn(
+                28.4600
+        );
 
-        when(hospitalWithFewerBeds.getFacilityType())
-                .thenReturn("TRAUMA");
+        when(
+                hospitalWithFewerBeds.getLongitude()
+        ).thenReturn(
+                77.0300
+        );
 
-        when(hospitalWithFewerBeds.getAvailableBeds())
-                .thenReturn(5);
+        when(
+                hospitalWithMoreBeds.getHospitalCode()
+        ).thenReturn(
+                "HOS-02"
+        );
 
-        when(hospitalWithFewerBeds.getLatitude())
-                .thenReturn(28.4600);
+        when(
+                hospitalWithMoreBeds.getFacilityType()
+        ).thenReturn(
+                "TRAUMA"
+        );
 
-        when(hospitalWithFewerBeds.getLongitude())
-                .thenReturn(77.0300);
+        when(
+                hospitalWithMoreBeds.getAvailableBeds()
+        ).thenReturn(
+                15
+        );
 
+        when(
+                hospitalWithMoreBeds.getLatitude()
+        ).thenReturn(
+                28.4500
+        );
 
-        when(hospitalWithMoreBeds.getId())
-                .thenReturn(102L);
-
-        when(hospitalWithMoreBeds.getHospitalCode())
-                .thenReturn("HOS-02");
-
-        when(hospitalWithMoreBeds.getName())
-                .thenReturn("Hospital With More Beds");
-
-        when(hospitalWithMoreBeds.getFacilityType())
-                .thenReturn("TRAUMA");
-
-        when(hospitalWithMoreBeds.getAvailableBeds())
-                .thenReturn(15);
-
-        when(hospitalWithMoreBeds.getLatitude())
-                .thenReturn(28.4500);
-
-        when(hospitalWithMoreBeds.getLongitude())
-                .thenReturn(77.0400);
-
+        when(
+                hospitalWithMoreBeds.getLongitude()
+        ).thenReturn(
+                77.0400
+        );
 
         when(
                 hospitalRepository.findAll()
@@ -551,70 +889,94 @@ class HospitalSelectionServiceTest {
                 )
         );
 
-
         when(
                 roadGraph.findNearestNode(
                         28.4600,
                         77.0300
                 )
-        ).thenReturn(hospitalNode1);
+        ).thenReturn(
+                hospitalNode1
+        );
 
         when(
                 roadGraph.findNearestNode(
                         28.4500,
                         77.0400
                 )
-        ).thenReturn(hospitalNode2);
-
+        ).thenReturn(
+                hospitalNode2
+        );
 
         TrafficDijkstraResponse route1 =
                 org.mockito.Mockito.mock(
                         TrafficDijkstraResponse.class
                 );
 
-        when(route1.distanceKm())
-                .thenReturn(5.0);
+        when(
+                route1.distanceKm()
+        ).thenReturn(
+                5.0
+        );
 
-        when(route1.estimatedTravelTimeMinutes())
-                .thenReturn(10.0);
+        when(
+                route1.estimatedTravelTimeMinutes()
+        ).thenReturn(
+                10.0
+        );
 
-        when(route1.trafficLevel())
-                .thenReturn("LOW");
-
+        when(
+                route1.trafficLevel()
+        ).thenReturn(
+                "LOW"
+        );
 
         TrafficDijkstraResponse route2 =
                 org.mockito.Mockito.mock(
                         TrafficDijkstraResponse.class
                 );
 
-        when(route2.distanceKm())
-                .thenReturn(7.0);
+        when(
+                route2.distanceKm()
+        ).thenReturn(
+                7.0
+        );
 
-        when(route2.estimatedTravelTimeMinutes())
-                .thenReturn(10.0);
+        when(
+                route2.estimatedTravelTimeMinutes()
+        ).thenReturn(
+                10.0
+        );
 
-        when(route2.trafficLevel())
-                .thenReturn("LOW");
-
+        when(
+                route2.trafficLevel()
+        ).thenReturn(
+                "LOW"
+        );
 
         when(
                 routingService.findRoute(
                         "emergency-node",
-                        "hospital-node-1"
+                        "hospital-node-1",
+                        RoutingAlgorithm.DIJKSTRA
                 )
-        ).thenReturn(route1);
+        ).thenReturn(
+                route1
+        );
 
         when(
                 routingService.findRoute(
                         "emergency-node",
-                        "hospital-node-2"
+                        "hospital-node-2",
+                        RoutingAlgorithm.DIJKSTRA
                 )
-        ).thenReturn(route2);
-
+        ).thenReturn(
+                route2
+        );
 
         HospitalSelectionResponse result =
-                hospitalSelectionService.findBestHospital(1L);
-
+                hospitalSelectionService.findBestHospital(
+                        1L
+                );
 
         assertNotNull(result);
 
@@ -632,14 +994,206 @@ class HospitalSelectionServiceTest {
 
     // =========================================================
     // TEST 6
+    // EXPLICIT ROUTING ALGORITHM MUST BE USED
     // =========================================================
-    //
-    // Missing emergency should produce the typed exception.
-    //
+
+    @Test
+    void shouldUseExplicitRoutingAlgorithm() {
+
+        when(
+                emergency.getId()
+        ).thenReturn(
+                1L
+        );
+
+        when(
+                emergency.getLatitude()
+        ).thenReturn(
+                28.4595
+        );
+
+        when(
+                emergency.getLongitude()
+        ).thenReturn(
+                77.0266
+        );
+
+        when(
+                emergency.getFacility()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                emergencyRepository.findById(1L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        28.4595,
+                        77.0266
+                )
+        ).thenReturn(
+                emergencyNode
+        );
+
+        Hospital hospital =
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
+
+        when(
+                hospital.getHospitalCode()
+        ).thenReturn(
+                "HOS-01"
+        );
+
+        when(
+                hospital.getName()
+        ).thenReturn(
+                "Test Hospital"
+        );
+
+        when(
+                hospital.getFacilityType()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                hospital.getAvailableBeds()
+        ).thenReturn(
+                10
+        );
+
+        when(
+                hospital.getLatitude()
+        ).thenReturn(
+                28.4600
+        );
+
+        when(
+                hospital.getLongitude()
+        ).thenReturn(
+                77.0300
+        );
+
+        when(
+                hospitalRepository.findAll()
+        ).thenReturn(
+                List.of(hospital)
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        28.4600,
+                        77.0300
+                )
+        ).thenReturn(
+                hospitalNode1
+        );
+
+        TrafficDijkstraResponse route =
+                org.mockito.Mockito.mock(
+                        TrafficDijkstraResponse.class
+                );
+
+        when(
+                route.distanceKm()
+        ).thenReturn(
+                4.0
+        );
+
+        when(
+                route.estimatedTravelTimeMinutes()
+        ).thenReturn(
+                7.0
+        );
+
+        when(
+                route.trafficLevel()
+        ).thenReturn(
+                "LOW"
+        );
+
+        when(
+                routingService.findRoute(
+                        "emergency-node",
+                        "hospital-node-1",
+                        RoutingAlgorithm.ASTAR
+                )
+        ).thenReturn(
+                route
+        );
+
+        HospitalSelectionResponse result =
+                hospitalSelectionService.findBestHospital(
+                        1L,
+                        RoutingAlgorithm.ASTAR
+                );
+
+        assertNotNull(result);
+
+        assertEquals(
+                "HOS-01",
+                result.hospitalCode()
+        );
+
+        assertEquals(
+                "Test Hospital",
+                result.hospitalName()
+        );
+
+        verify(
+                routingService
+        ).findRoute(
+                "emergency-node",
+                "hospital-node-1",
+                RoutingAlgorithm.ASTAR
+        );
+    }
+
+
+    // =========================================================
+    // TEST 7
+    // NULL ROUTING ALGORITHM MUST BE REJECTED
+    // =========================================================
+
+    @Test
+    void shouldRejectNullRoutingAlgorithm() {
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        hospitalSelectionService
+                                .findBestHospital(
+                                        1L,
+                                        null
+                                )
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).findById(1L);
+    }
+
+
+    // =========================================================
+    // TEST 8
+    // MISSING EMERGENCY SHOULD PRODUCE TYPED EXCEPTION
     // =========================================================
 
     @Test
     void shouldThrowExceptionWhenEmergencyDoesNotExist() {
+
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
 
         when(
                 emergencyRepository.findById(999L)
@@ -647,14 +1201,12 @@ class HospitalSelectionServiceTest {
                 Optional.empty()
         );
 
-
         assertThrows(
                 EmergencyNotFoundException.class,
                 () ->
                         hospitalSelectionService
                                 .findBestHospital(999L)
         );
-
 
         verify(
                 hospitalRepository,
@@ -665,8 +1217,258 @@ class HospitalSelectionServiceTest {
                 roadGraph,
                 never()
         ).findNearestNode(
-                org.mockito.Mockito.anyDouble(),
-                org.mockito.Mockito.anyDouble()
+                anyDouble(),
+                anyDouble()
+        );
+    }
+
+
+    // =========================================================
+    // TEST 9
+    // EMERGENCY WITH NO ROAD NODE MUST BE REJECTED
+    // =========================================================
+
+    @Test
+    void shouldRejectEmergencyWhenNoRoadNodeExists() {
+
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
+        when(
+                emergency.getLatitude()
+        ).thenReturn(
+                28.4595
+        );
+
+        when(
+                emergency.getLongitude()
+        ).thenReturn(
+                77.0266
+        );
+
+        when(
+                emergencyRepository.findById(1L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        28.4595,
+                        77.0266
+                )
+        ).thenReturn(
+                null
+        );
+
+        assertThrows(
+                NoSuitableHospitalException.class,
+                () ->
+                        hospitalSelectionService
+                                .findBestHospital(1L)
+        );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).findAll();
+    }
+
+
+    // =========================================================
+    // TEST 10
+    // INVALID HOSPITAL COORDINATES SHOULD BE SKIPPED
+    // =========================================================
+
+    @Test
+    void shouldSkipHospitalWithInvalidCoordinates() {
+
+        when(
+                emergency.getLatitude()
+        ).thenReturn(
+                28.4595
+        );
+
+        when(
+                emergency.getLongitude()
+        ).thenReturn(
+                77.0266
+        );
+
+        when(
+                emergency.getFacility()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                emergencyRepository.findById(1L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        28.4595,
+                        77.0266
+                )
+        ).thenReturn(
+                emergencyNode
+        );
+
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
+        Hospital invalidHospital =
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
+
+        when(
+                invalidHospital.getHospitalCode()
+        ).thenReturn(
+                "HOS-01"
+        );
+
+        when(
+                invalidHospital.getFacilityType()
+        ).thenReturn(
+                "TRAUMA"
+        );
+
+        when(
+                invalidHospital.getAvailableBeds()
+        ).thenReturn(
+                10
+        );
+
+        when(
+                invalidHospital.getLatitude()
+        ).thenReturn(
+                200.0
+        );
+
+        when(
+                invalidHospital.getLongitude()
+        ).thenReturn(
+                77.0300
+        );
+
+        when(
+                hospitalRepository.findAll()
+        ).thenReturn(
+                List.of(
+                        invalidHospital
+                )
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        200.0,
+                        77.0300
+                )
+        ).thenReturn(
+                null
+        );
+
+        assertThrows(
+                NoSuitableHospitalException.class,
+                () ->
+                        hospitalSelectionService
+                                .findBestHospital(1L)
+        );
+
+        verify(
+                routingService,
+                never()
+        ).findRoute(
+                anyString(),
+                anyString(),
+                any(RoutingAlgorithm.class)
+        );
+    }
+
+
+    // =========================================================
+    // TEST 11
+    // NULL AVAILABLE BEDS SHOULD BE IGNORED
+    // =========================================================
+
+    @Test
+    void shouldIgnoreHospitalWithNullAvailableBeds() {
+
+        when(
+                emergency.getLatitude()
+        ).thenReturn(
+                28.4595
+        );
+
+        when(
+                emergency.getLongitude()
+        ).thenReturn(
+                77.0266
+        );
+
+        when(
+                emergencyRepository.findById(1L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                roadGraph.findNearestNode(
+                        28.4595,
+                        77.0266
+                )
+        ).thenReturn(
+                emergencyNode
+        );
+
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
+        Hospital hospitalWithNullBeds =
+                org.mockito.Mockito.mock(
+                        Hospital.class
+                );
+
+        when(
+                hospitalWithNullBeds.getAvailableBeds()
+        ).thenReturn(
+                null
+        );
+
+        when(
+                hospitalRepository.findAll()
+        ).thenReturn(
+                List.of(
+                        hospitalWithNullBeds
+                )
+        );
+
+        assertThrows(
+                NoSuitableHospitalException.class,
+                () ->
+                        hospitalSelectionService
+                                .findBestHospital(1L)
+        );
+
+        verify(
+                routingService,
+                never()
+        ).findRoute(
+                anyString(),
+                anyString(),
+                any(RoutingAlgorithm.class)
         );
     }
 }
