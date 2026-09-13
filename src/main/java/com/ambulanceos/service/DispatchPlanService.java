@@ -3,8 +3,8 @@ package com.ambulanceos.service;
 import com.ambulanceos.dto.DispatchPlanResponse;
 import com.ambulanceos.dto.DispatchResponse;
 import com.ambulanceos.dto.HospitalSelectionResponse;
-import com.ambulanceos.dto.TripRoute;
 import com.ambulanceos.dto.TrafficDijkstraResponse;
+import com.ambulanceos.dto.TripRoute;
 import com.ambulanceos.entity.Ambulance;
 import com.ambulanceos.entity.Dispatch;
 import com.ambulanceos.entity.Emergency;
@@ -50,14 +50,18 @@ public class DispatchPlanService {
     /*
      * Central routing gateway.
      *
-     * The selected algorithm is read from the routing settings
-     * and then explicitly passed to the routing engine so that
-     * every route in this dispatch uses the same algorithm.
+     * The selected algorithm is explicitly passed to every
+     * routing operation that forms this dispatch.
+     *
+     * Possible algorithms:
+     *
+     *     DIJKSTRA
+     *     ASTAR
      */
     private final RoutingService routingService;
 
     /*
-     * Provides the currently selected routing algorithm.
+     * Provides the currently configured routing algorithm.
      */
     private final RoutingSettingsService routingSettingsService;
 
@@ -65,29 +69,58 @@ public class DispatchPlanService {
     // =========================================================
     // CREATE COMPLETE DISPATCH PLAN
     // =========================================================
+    //
+    // Complete workflow:
+    //
+    //     Emergency
+    //         ↓
+    //     Select routing algorithm
+    //         ↓
+    //     Find best ambulance
+    //         ↓
+    //     Find best hospital
+    //         ↓
+    //     Route Ambulance → Emergency
+    //         ↓
+    //     Route Emergency → Hospital
+    //         ↓
+    //     Emergency ACTIVE → RESPONDING
+    //         ↓
+    //     Ambulance AVAILABLE → EN_ROUTE
+    //         ↓
+    //     Create Dispatch
+    //         ↓
+    //     Create TripRoute
+    //
+    // =========================================================
 
     @Transactional
-    public DispatchPlanResponse createDispatchPlan(Long emergencyId) {
+    public DispatchPlanResponse createDispatchPlan(
+            Long emergencyId
+    ) {
 
         // =====================================================
         // 1. FIND EMERGENCY
         // =====================================================
 
         Emergency emergency =
-                emergencyRepository.findById(emergencyId)
-                        .orElseThrow(() ->
-                                new EmergencyNotFoundException(
-                                        emergencyId
-                                )
-                        );
+                emergencyRepository.findById(
+                        emergencyId
+                ).orElseThrow(() ->
+                        new EmergencyNotFoundException(
+                                emergencyId
+                        )
+                );
 
 
         // =====================================================
-        // 2. GET CURRENT ROUTING ALGORITHM
+        // 2. GET ROUTING ALGORITHM
         // =====================================================
         //
-        // Read the algorithm once at the beginning of the
-        // dispatch so the entire trip uses the same algorithm.
+        // Read the configured algorithm exactly once.
+        //
+        // The same algorithm is then passed through the entire
+        // dispatch workflow.
         //
         // =====================================================
 
@@ -99,14 +132,16 @@ public class DispatchPlanService {
         // 3. FIND BEST AVAILABLE AMBULANCE
         // =====================================================
         //
-        // DispatchService performs ambulance selection using
-        // the routing system.
+        // Explicitly pass the selected algorithm so ambulance
+        // selection uses the same algorithm as the rest of the
+        // dispatch.
         //
         // =====================================================
 
         DispatchResponse ambulanceResponse =
                 dispatchService.findBestAmbulance(
-                        emergencyId
+                        emergencyId,
+                        selectedAlgorithm
                 );
 
 
@@ -128,14 +163,18 @@ public class DispatchPlanService {
         // 5. FIND BEST SUITABLE HOSPITAL
         // =====================================================
         //
-        // HospitalSelectionService filters hospitals by
-        // suitability, available beds and route time.
+        // Explicitly pass the same routing algorithm.
+        //
+        // This prevents ambulance selection, hospital
+        // selection and actual routing from using different
+        // algorithms during the same dispatch.
         //
         // =====================================================
 
         HospitalSelectionResponse hospitalResponse =
                 hospitalSelectionService.findBestHospital(
-                        emergencyId
+                        emergencyId,
+                        selectedAlgorithm
                 );
 
 
@@ -196,11 +235,6 @@ public class DispatchPlanService {
         // =====================================================
         // 9. AMBULANCE → EMERGENCY
         // =====================================================
-        //
-        // Explicitly use the algorithm selected for this
-        // dispatch.
-        //
-        // =====================================================
 
         TrafficDijkstraResponse ambulanceToEmergency;
 
@@ -213,11 +247,12 @@ public class DispatchPlanService {
                             selectedAlgorithm
                     );
 
-        } catch (RuntimeException ex) {
+        } catch (RouteNotFoundException exception) {
 
             throw new RouteNotFoundException(
-                    "Unable to calculate route from ambulance to emergency: "
-                            + ex.getMessage()
+                    "Unable to calculate route from ambulance "
+                            + "to emergency: "
+                            + exception.getMessage()
             );
         }
 
@@ -255,11 +290,6 @@ public class DispatchPlanService {
         // =====================================================
         // 12. EMERGENCY → HOSPITAL
         // =====================================================
-        //
-        // Use the exact same algorithm selected for this
-        // dispatch.
-        //
-        // =====================================================
 
         TrafficDijkstraResponse emergencyToHospital;
 
@@ -272,11 +302,12 @@ public class DispatchPlanService {
                             selectedAlgorithm
                     );
 
-        } catch (RuntimeException ex) {
+        } catch (RouteNotFoundException exception) {
 
             throw new RouteNotFoundException(
-                    "Unable to calculate route from emergency to hospital: "
-                            + ex.getMessage()
+                    "Unable to calculate route from emergency "
+                            + "to hospital: "
+                            + exception.getMessage()
             );
         }
 
@@ -292,12 +323,18 @@ public class DispatchPlanService {
 
 
         // =====================================================
-        // 14. CURRENT AMBULANCE → HOSPITAL ROUTE
+        // 14. AMBULANCE → HOSPITAL ROUTE
         // =====================================================
         //
-        // RouteService is retained because RouteDetails is part
-        // of the existing DispatchPlanResponse used by the
-        // frontend.
+        // Retained because RouteDetails is part of the existing
+        // DispatchPlanResponse consumed by the frontend.
+        //
+        // This route is informational only.
+        //
+        // Actual dispatch totals use:
+        //
+        //     Ambulance → Emergency
+        //     Emergency → Hospital
         //
         // =====================================================
 
@@ -309,12 +346,41 @@ public class DispatchPlanService {
 
 
         // =====================================================
-        // 15. CHANGE AMBULANCE STATUS
+        // 15. UPDATE EMERGENCY STATUS
+        // =====================================================
         //
-        // AVAILABLE → EN_ROUTE
+        // The ambulance has been successfully assigned and the
+        // dispatch routes have been calculated.
+        //
+        // Therefore:
+        //
+        //     ACTIVE → RESPONDING
+        //
+        // This state transition is part of the same transaction
+        // as dispatch creation.
+        //
         // =====================================================
 
-        ambulance.setStatus("EN_ROUTE");
+        emergency.setStatus(
+                "RESPONDING"
+        );
+
+        emergencyRepository.save(
+                emergency
+        );
+
+
+        // =====================================================
+        // 16. CHANGE AMBULANCE STATUS
+        // =====================================================
+        //
+        //     AVAILABLE → EN_ROUTE
+        //
+        // =====================================================
+
+        ambulance.setStatus(
+                "EN_ROUTE"
+        );
 
         ambulance =
                 ambulanceRepository.save(
@@ -323,7 +389,7 @@ public class DispatchPlanService {
 
 
         // =====================================================
-        // 16. CREATE PERSISTENT DISPATCH RECORD
+        // 17. CREATE PERSISTENT DISPATCH RECORD
         // =====================================================
 
         Dispatch dispatch =
@@ -401,7 +467,7 @@ public class DispatchPlanService {
 
 
         // =====================================================
-        // 17. INITIAL TRIP STATUS
+        // 18. INITIAL TRIP STATUS
         // =====================================================
 
         TripRoute trip =
@@ -413,7 +479,7 @@ public class DispatchPlanService {
 
 
         // =====================================================
-        // 18. RETURN COMPLETE DISPATCH PLAN
+        // 19. RETURN COMPLETE DISPATCH PLAN
         // =====================================================
 
         return new DispatchPlanResponse(
@@ -489,10 +555,6 @@ public class DispatchPlanService {
             TrafficDijkstraResponse response
     ) {
 
-        // -----------------------------------------------------
-        // Defensive check for an invalid routing response.
-        // -----------------------------------------------------
-
         if (response == null) {
 
             throw new RouteNotFoundException(
@@ -500,8 +562,11 @@ public class DispatchPlanService {
             );
         }
 
-        if (response.path() == null ||
-                response.path().isEmpty()) {
+
+        if (
+                response.path() == null
+                        || response.path().isEmpty()
+        ) {
 
             throw new RouteNotFoundException(
                     "Routing engine returned an empty route"
@@ -521,7 +586,9 @@ public class DispatchPlanService {
                 response.path()) {
 
             GraphNode node =
-                    roadGraph.getNode(nodeId);
+                    roadGraph.getNode(
+                            nodeId
+                    );
 
 
             if (node == null) {
