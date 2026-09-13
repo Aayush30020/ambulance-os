@@ -6,6 +6,7 @@ import com.ambulanceos.entity.Ambulance;
 import com.ambulanceos.entity.Dispatch;
 import com.ambulanceos.entity.Emergency;
 import com.ambulanceos.exception.NoAvailableAmbulanceException;
+import com.ambulanceos.exception.RouteNotFoundException;
 import com.ambulanceos.graph.GraphNode;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import com.ambulanceos.repository.AmbulanceRepository;
@@ -43,8 +44,10 @@ class DispatchServiceTest {
     private GurgaonRoadGraph roadGraph;
 
     @Mock
-    private TrafficAwareDijkstraService
-            trafficAwareDijkstraService;
+    private RoutingService routingService;
+
+    @Mock
+    private RoutingSettingsService routingSettingsService;
 
     @InjectMocks
     private DispatchService dispatchService;
@@ -91,6 +94,17 @@ class DispatchServiceTest {
     @Test
     void shouldSelectFastestAvailableAmbulance() {
 
+        /*
+         * DispatchService reads the routing configuration when
+         * calculating the best ambulance.
+         */
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
+
         Ambulance ambulance1 =
                 Ambulance.builder()
                         .id(101L)
@@ -112,8 +126,11 @@ class DispatchServiceTest {
                         .build();
 
 
-        when(emergencyRepository.findById(1L))
-                .thenReturn(Optional.of(emergency));
+        when(
+                emergencyRepository.findById(1L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
 
 
         when(
@@ -121,7 +138,9 @@ class DispatchServiceTest {
                         emergency.getLatitude(),
                         emergency.getLongitude()
                 )
-        ).thenReturn(emergencyNode);
+        ).thenReturn(
+                emergencyNode
+        );
 
 
         when(
@@ -158,7 +177,9 @@ class DispatchServiceTest {
                         ambulance1.getLatitude(),
                         ambulance1.getLongitude()
                 )
-        ).thenReturn(ambulanceNode1);
+        ).thenReturn(
+                ambulanceNode1
+        );
 
 
         when(
@@ -166,7 +187,9 @@ class DispatchServiceTest {
                         ambulance2.getLatitude(),
                         ambulance2.getLongitude()
                 )
-        ).thenReturn(ambulanceNode2);
+        ).thenReturn(
+                ambulanceNode2
+        );
 
 
         TrafficDijkstraResponse route1 =
@@ -197,20 +220,30 @@ class DispatchServiceTest {
                 );
 
 
+        /*
+         * Current RoutingService API requires the routing
+         * algorithm explicitly.
+         */
         when(
-                trafficAwareDijkstraService.findShortestPath(
+                routingService.findRoute(
                         "ambulance-node-1",
-                        "emergency-node"
+                        "emergency-node",
+                        RoutingAlgorithm.DIJKSTRA
                 )
-        ).thenReturn(route1);
+        ).thenReturn(
+                route1
+        );
 
 
         when(
-                trafficAwareDijkstraService.findShortestPath(
+                routingService.findRoute(
                         "ambulance-node-2",
-                        "emergency-node"
+                        "emergency-node",
+                        RoutingAlgorithm.DIJKSTRA
                 )
-        ).thenReturn(route2);
+        ).thenReturn(
+                route2
+        );
 
 
         DispatchResponse result =
@@ -255,6 +288,13 @@ class DispatchServiceTest {
     void shouldThrowExceptionWhenNoAmbulanceIsAvailable() {
 
         when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
+
+        when(
                 emergencyRepository.findById(1L)
         ).thenReturn(
                 Optional.of(emergency)
@@ -295,6 +335,13 @@ class DispatchServiceTest {
 
     @Test
     void shouldSkipUnreachableAmbulance() {
+
+        when(
+                routingSettingsService.getRoutingAlgorithm()
+        ).thenReturn(
+                RoutingAlgorithm.DIJKSTRA
+        );
+
 
         Ambulance unreachableAmbulance =
                 Ambulance.builder()
@@ -385,13 +432,19 @@ class DispatchServiceTest {
         );
 
 
+        /*
+         * A typed RouteNotFoundException is used because
+         * DispatchService intentionally skips unreachable
+         * ambulances by catching this exception.
+         */
         when(
-                trafficAwareDijkstraService.findShortestPath(
+                routingService.findRoute(
                         "unreachable-node",
-                        "emergency-node"
+                        "emergency-node",
+                        RoutingAlgorithm.DIJKSTRA
                 )
         ).thenThrow(
-                new RuntimeException(
+                new RouteNotFoundException(
                         "No route found"
                 )
         );
@@ -412,9 +465,10 @@ class DispatchServiceTest {
 
 
         when(
-                trafficAwareDijkstraService.findShortestPath(
+                routingService.findRoute(
                         "reachable-node",
-                        "emergency-node"
+                        "emergency-node",
+                        RoutingAlgorithm.DIJKSTRA
                 )
         ).thenReturn(
                 reachableRoute
