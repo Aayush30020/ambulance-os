@@ -21,6 +21,8 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -78,7 +80,7 @@ class AmbulanceServiceTest {
 
         when(
                 ambulanceRepository.save(
-                        org.mockito.Mockito.any(Ambulance.class)
+                        any(Ambulance.class)
                 )
         ).thenReturn(ambulance);
 
@@ -125,7 +127,7 @@ class AmbulanceServiceTest {
         verify(
                 ambulanceRepository
         ).save(
-                org.mockito.Mockito.any(Ambulance.class)
+                any(Ambulance.class)
         );
     }
 
@@ -148,7 +150,7 @@ class AmbulanceServiceTest {
 
         when(
                 ambulanceRepository.save(
-                        org.mockito.Mockito.any(Ambulance.class)
+                        any(Ambulance.class)
                 )
         ).thenAnswer(
                 invocation ->
@@ -368,13 +370,12 @@ class AmbulanceServiceTest {
     // TEST 6
     // =========================================================
     //
-    // Updating the status should convert the supplied status
-    // to uppercase before saving.
+    // AVAILABLE → EN_ROUTE is a valid transition.
     //
     // =========================================================
 
     @Test
-    void shouldUpdateAmbulanceStatusToUppercase() {
+    void shouldUpdateAmbulanceFromAvailableToEnRoute() {
 
         when(
                 ambulanceRepository.findById(101L)
@@ -419,6 +420,264 @@ class AmbulanceServiceTest {
     // TEST 7
     // =========================================================
     //
+    // EN_ROUTE → AT_EMERGENCY is a valid transition.
+    //
+    // =========================================================
+
+    @Test
+    void shouldUpdateAmbulanceFromEnRouteToAtEmergency() {
+
+        ambulance.setStatus("EN_ROUTE");
+
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+        when(
+                ambulanceRepository.save(ambulance)
+        ).thenReturn(
+                ambulance
+        );
+
+
+        AmbulanceResponse result =
+                ambulanceService.updateStatus(
+                        101L,
+                        "at_emergency"
+                );
+
+
+        assertNotNull(result);
+
+        assertEquals(
+                "AT_EMERGENCY",
+                result.status()
+        );
+
+        assertEquals(
+                "AT_EMERGENCY",
+                ambulance.getStatus()
+        );
+
+
+        verify(
+                ambulanceRepository
+        ).save(ambulance);
+    }
+
+
+    // =========================================================
+    // TEST 8
+    // =========================================================
+    //
+    // AT_EMERGENCY → TO_HOSPITAL is a valid transition.
+    //
+    // =========================================================
+
+    @Test
+    void shouldUpdateAmbulanceFromAtEmergencyToHospital() {
+
+        ambulance.setStatus("AT_EMERGENCY");
+
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+        when(
+                ambulanceRepository.save(ambulance)
+        ).thenReturn(
+                ambulance
+        );
+
+
+        AmbulanceResponse result =
+                ambulanceService.updateStatus(
+                        101L,
+                        "to_hospital"
+                );
+
+
+        assertNotNull(result);
+
+        assertEquals(
+                "TO_HOSPITAL",
+                result.status()
+        );
+
+        assertEquals(
+                "TO_HOSPITAL",
+                ambulance.getStatus()
+        );
+
+
+        verify(
+                ambulanceRepository
+        ).save(ambulance);
+    }
+
+
+    // =========================================================
+    // TEST 9
+    // =========================================================
+    //
+    // TO_HOSPITAL → AVAILABLE is a valid transition.
+    //
+    // =========================================================
+
+    @Test
+    void shouldUpdateAmbulanceFromHospitalToAvailable() {
+
+        ambulance.setStatus("TO_HOSPITAL");
+
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+        when(
+                ambulanceRepository.save(ambulance)
+        ).thenReturn(
+                ambulance
+        );
+
+
+        AmbulanceResponse result =
+                ambulanceService.updateStatus(
+                        101L,
+                        "available"
+                );
+
+
+        assertNotNull(result);
+
+        assertEquals(
+                "AVAILABLE",
+                result.status()
+        );
+
+        assertEquals(
+                "AVAILABLE",
+                ambulance.getStatus()
+        );
+
+
+        verify(
+                ambulanceRepository
+        ).save(ambulance);
+    }
+
+
+    // =========================================================
+    // TEST 10
+    // =========================================================
+    //
+    // Active ambulance can be released directly to AVAILABLE.
+    //
+    // This is useful when a dispatch is completed/cancelled.
+    //
+    // =========================================================
+
+    @Test
+    void shouldAllowActiveAmbulanceToReturnToAvailable() {
+
+        ambulance.setStatus("EN_ROUTE");
+
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+        when(
+                ambulanceRepository.save(ambulance)
+        ).thenReturn(
+                ambulance
+        );
+
+
+        AmbulanceResponse result =
+                ambulanceService.updateStatus(
+                        101L,
+                        "AVAILABLE"
+                );
+
+
+        assertNotNull(result);
+
+        assertEquals(
+                "AVAILABLE",
+                result.status()
+        );
+
+        assertEquals(
+                "AVAILABLE",
+                ambulance.getStatus()
+        );
+
+
+        verify(
+                ambulanceRepository
+        ).save(ambulance);
+    }
+
+
+    // =========================================================
+    // TEST 11
+    // =========================================================
+    //
+    // Setting the same status should be harmless and should
+    // not unnecessarily save the entity.
+    //
+    // =========================================================
+
+    @Test
+    void shouldAllowSameStatusWithoutSaving() {
+
+        ambulance.setStatus("AVAILABLE");
+
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+
+        AmbulanceResponse result =
+                ambulanceService.updateStatus(
+                        101L,
+                        "available"
+                );
+
+
+        assertNotNull(result);
+
+        assertEquals(
+                "AVAILABLE",
+                result.status()
+        );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
+    }
+
+
+    // =========================================================
+    // TEST 12
+    // =========================================================
+    //
     // Empty status should be rejected.
     //
     // =========================================================
@@ -441,11 +700,17 @@ class AmbulanceServiceTest {
                                 ""
                         )
         );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
     }
 
 
     // =========================================================
-    // TEST 8
+    // TEST 13
     // =========================================================
     //
     // Null status should also be rejected.
@@ -470,11 +735,252 @@ class AmbulanceServiceTest {
                                 null
                         )
         );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
     }
 
 
     // =========================================================
-    // TEST 9
+    // TEST 14
+    // =========================================================
+    //
+    // Unknown status should be rejected.
+    //
+    // Example:
+    //
+    // AVAILABLE → FLYING
+    //
+    // =========================================================
+
+    @Test
+    void shouldRejectUnknownAmbulanceStatus() {
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ambulanceService.updateStatus(
+                                101L,
+                                "flying"
+                        )
+        );
+
+
+        assertEquals(
+                "AVAILABLE",
+                ambulance.getStatus()
+        );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
+    }
+
+
+    // =========================================================
+    // TEST 15
+    // =========================================================
+    //
+    // Invalid transition:
+    //
+    // AVAILABLE → TO_HOSPITAL
+    //
+    // =========================================================
+
+    @Test
+    void shouldRejectInvalidStatusTransition() {
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+
+        IllegalArgumentException exception =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                ambulanceService.updateStatus(
+                                        101L,
+                                        "TO_HOSPITAL"
+                                )
+                );
+
+
+        assertEquals(
+                "Invalid ambulance status transition: AVAILABLE -> TO_HOSPITAL",
+                exception.getMessage()
+        );
+
+
+        assertEquals(
+                "AVAILABLE",
+                ambulance.getStatus()
+        );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
+    }
+
+
+    // =========================================================
+    // TEST 16
+    // =========================================================
+    //
+    // Invalid transition:
+    //
+    // EN_ROUTE → TO_HOSPITAL
+    //
+    // Ambulance must reach the emergency first.
+    //
+    // =========================================================
+
+    @Test
+    void shouldRejectSkippingEmergencyState() {
+
+        ambulance.setStatus("EN_ROUTE");
+
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ambulanceService.updateStatus(
+                                101L,
+                                "TO_HOSPITAL"
+                        )
+        );
+
+
+        assertEquals(
+                "EN_ROUTE",
+                ambulance.getStatus()
+        );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
+    }
+
+
+    // =========================================================
+    // TEST 17
+    // =========================================================
+    //
+    // Invalid transition:
+    //
+    // AT_EMERGENCY → EN_ROUTE
+    //
+    // =========================================================
+
+    @Test
+    void shouldRejectReturningToEnRouteFromEmergency() {
+
+        ambulance.setStatus("AT_EMERGENCY");
+
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ambulanceService.updateStatus(
+                                101L,
+                                "EN_ROUTE"
+                        )
+        );
+
+
+        assertEquals(
+                "AT_EMERGENCY",
+                ambulance.getStatus()
+        );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
+    }
+
+
+    // =========================================================
+    // TEST 18
+    // =========================================================
+    //
+    // Invalid transition:
+    //
+    // TO_HOSPITAL → EN_ROUTE
+    //
+    // =========================================================
+
+    @Test
+    void shouldRejectReturningToEnRouteFromHospital() {
+
+        ambulance.setStatus("TO_HOSPITAL");
+
+
+        when(
+                ambulanceRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(ambulance)
+        );
+
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ambulanceService.updateStatus(
+                                101L,
+                                "EN_ROUTE"
+                        )
+        );
+
+
+        assertEquals(
+                "TO_HOSPITAL",
+                ambulance.getStatus()
+        );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
+    }
+
+
+    // =========================================================
+    // TEST 19
     // =========================================================
     //
     // Updating the status of a missing ambulance should throw
@@ -500,5 +1006,106 @@ class AmbulanceServiceTest {
                                 "AVAILABLE"
                         )
         );
+    }
+
+
+    // =========================================================
+    // TEST 20
+    // =========================================================
+    //
+    // Creating an ambulance with an invalid status should fail.
+    //
+    // =========================================================
+
+    @Test
+    void shouldRejectInvalidStatusWhenCreatingAmbulance() {
+
+        AmbulanceRequest invalidRequest =
+                new AmbulanceRequest(
+                        "AMB-102",
+                        28.4598,
+                        77.0268,
+                        "flying",
+                        "ALS"
+                );
+
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ambulanceService.createAmbulance(
+                                invalidRequest
+                        )
+        );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
+    }
+
+
+    // =========================================================
+    // TEST 21
+    // =========================================================
+    //
+    // Creating an ambulance with a null status should fail.
+    //
+    // =========================================================
+
+    @Test
+    void shouldRejectNullStatusWhenCreatingAmbulance() {
+
+        AmbulanceRequest invalidRequest =
+                new AmbulanceRequest(
+                        "AMB-102",
+                        28.4598,
+                        77.0268,
+                        null,
+                        "ALS"
+                );
+
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ambulanceService.createAmbulance(
+                                invalidRequest
+                        )
+        );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
+    }
+
+
+    // =========================================================
+    // TEST 22
+    // =========================================================
+    //
+    // Creating an ambulance with a null request should fail.
+    //
+    // =========================================================
+
+    @Test
+    void shouldRejectNullAmbulanceRequest() {
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ambulanceService.createAmbulance(
+                                null
+                        )
+        );
+
+
+        verify(
+                ambulanceRepository,
+                never()
+        ).save(any(Ambulance.class));
     }
 }
