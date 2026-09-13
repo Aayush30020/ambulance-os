@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import API_URL from "../config/api";
 import {
     Activity,
     CheckCircle2,
@@ -209,7 +210,7 @@ export default function AlgorithmAnalytics() {
             setHistoryError("");
 
             const response = await axios.get(
-                "http://localhost:8080/api/dispatches"
+                `${API_URL}/dispatches`
             );
 
             setDispatchHistory(response.data || []);

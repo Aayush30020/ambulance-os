@@ -1,7 +1,5 @@
 import axios from "axios";
-
-const API_URL = "http://localhost:8080/api";
-
+import API_URL from "../config/api";
 
 // =========================================================
 // CREATE COMPLETE DISPATCH PLAN
@@ -35,7 +33,6 @@ export const createDispatchPlan = async (emergencyId) => {
 
     return response.data;
 };
-
 
 // =========================================================
 // GET ROUTE COORDINATES
