@@ -22,9 +22,10 @@ public class RoutingService {
     // FIND ROUTE USING CURRENT SYSTEM SETTING
     // =========================================================
     //
-    // This method is what normal production services should use.
+    // Production services should normally use this method.
     //
-    // The currently selected algorithm comes from PostgreSQL.
+    // RoutingService owns the responsibility of determining
+    // which routing algorithm is currently configured.
     //
     // =========================================================
 
@@ -34,8 +35,7 @@ public class RoutingService {
     ) {
 
         RoutingAlgorithm algorithm =
-                routingSettingsService
-                        .getRoutingAlgorithm();
+                routingSettingsService.getRoutingAlgorithm();
 
         return findRoute(
                 sourceNode,
@@ -49,8 +49,11 @@ public class RoutingService {
     // FIND ROUTE USING SPECIFIC ALGORITHM
     // =========================================================
     //
-    // Useful for Analytics / benchmarking where we explicitly
-    // want to compare Dijkstra and A*.
+    // Used by:
+    //
+    // - Algorithm comparison
+    // - Explicit dispatch routing
+    // - Testing
     //
     // =========================================================
 
@@ -67,21 +70,20 @@ public class RoutingService {
             );
         }
 
+
         return switch (algorithm) {
 
             case DIJKSTRA ->
-                    trafficAwareDijkstraService
-                            .findShortestPath(
-                                    sourceNode,
-                                    destinationNode
-                            );
+                    trafficAwareDijkstraService.findShortestPath(
+                            sourceNode,
+                            destinationNode
+                    );
 
             case ASTAR ->
-                    aStarService
-                            .findShortestPath(
-                                    sourceNode,
-                                    destinationNode
-                            );
+                    aStarService.findShortestPath(
+                            sourceNode,
+                            destinationNode
+                    );
         };
     }
 
@@ -106,8 +108,6 @@ public class RoutingService {
     ) {
 
         return routingSettingsService
-                .setRoutingAlgorithm(
-                        algorithm
-                );
+                .setRoutingAlgorithm(algorithm);
     }
 }
