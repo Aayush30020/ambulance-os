@@ -12,8 +12,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 
 import java.util.List;
 import java.util.Optional;
@@ -21,11 +19,12 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class HospitalServiceTest {
 
     @Mock
@@ -52,7 +51,6 @@ class HospitalServiceTest {
                         "TRAUMA"
                 );
 
-
         hospital =
                 Hospital.builder()
                         .id(101L)
@@ -67,29 +65,20 @@ class HospitalServiceTest {
 
 
     // =========================================================
-    // TEST 1
-    // =========================================================
-    //
-    // Creating a hospital should save the entity and return
-    // the mapped HospitalResponse.
-    //
+    // CREATE TESTS
     // =========================================================
 
     @Test
     void shouldCreateHospitalSuccessfully() {
 
         when(
-                hospitalRepository.save(
-                        org.mockito.Mockito.any(Hospital.class)
-                )
+                hospitalRepository.save(any(Hospital.class))
         ).thenReturn(hospital);
-
 
         HospitalResponse result =
                 hospitalService.createHospital(
                         hospitalRequest
                 );
-
 
         assertNotNull(result);
 
@@ -128,58 +117,37 @@ class HospitalServiceTest {
                 result.facilityType()
         );
 
-
         verify(
                 hospitalRepository
-        ).save(
-                org.mockito.Mockito.any(Hospital.class)
-        );
+        ).save(any(Hospital.class));
     }
 
-
-    // =========================================================
-    // TEST 2
-    // =========================================================
-    //
-    // Verify that createHospital() creates the correct entity
-    // before saving it.
-    //
-    // =========================================================
 
     @Test
     void shouldCreateHospitalWithCorrectDetails() {
 
         when(
-                hospitalRepository.save(
-                        org.mockito.Mockito.any(Hospital.class)
-                )
+                hospitalRepository.save(any(Hospital.class))
         ).thenAnswer(
                 invocation ->
                         invocation.getArgument(0)
         );
-
 
         ArgumentCaptor<Hospital> captor =
                 ArgumentCaptor.forClass(
                         Hospital.class
                 );
 
-
         hospitalService.createHospital(
                 hospitalRequest
         );
 
-
         verify(
                 hospitalRepository
-        ).save(
-                captor.capture()
-        );
-
+        ).save(captor.capture());
 
         Hospital savedHospital =
                 captor.getValue();
-
 
         assertEquals(
                 "HOS-01",
@@ -213,13 +181,266 @@ class HospitalServiceTest {
     }
 
 
+    @Test
+    void shouldNormalizeHospitalTextFieldsWhenCreating() {
+
+        HospitalRequest request =
+                new HospitalRequest(
+                        "  hos-05  ",
+                        "  Artemis Hospital  ",
+                        28.4352,
+                        77.0817,
+                        20,
+                        "  trauma  "
+                );
+
+        when(
+                hospitalRepository.save(any(Hospital.class))
+        ).thenAnswer(
+                invocation ->
+                        invocation.getArgument(0)
+        );
+
+        ArgumentCaptor<Hospital> captor =
+                ArgumentCaptor.forClass(
+                        Hospital.class
+                );
+
+        hospitalService.createHospital(request);
+
+        verify(
+                hospitalRepository
+        ).save(captor.capture());
+
+        Hospital savedHospital =
+                captor.getValue();
+
+        assertEquals(
+                "HOS-05",
+                savedHospital.getHospitalCode()
+        );
+
+        assertEquals(
+                "Artemis Hospital",
+                savedHospital.getName()
+        );
+
+        assertEquals(
+                "TRAUMA",
+                savedHospital.getFacilityType()
+        );
+
+        assertEquals(
+                20,
+                savedHospital.getAvailableBeds()
+        );
+    }
+
+
+    @Test
+    void shouldAllowZeroBedsWhenCreatingHospital() {
+
+        HospitalRequest request =
+                new HospitalRequest(
+                        "HOS-03",
+                        "Test Hospital",
+                        28.4000,
+                        77.0000,
+                        0,
+                        "GENERAL"
+                );
+
+        when(
+                hospitalRepository.save(any(Hospital.class))
+        ).thenAnswer(
+                invocation ->
+                        invocation.getArgument(0)
+        );
+
+        HospitalResponse result =
+                hospitalService.createHospital(request);
+
+        assertNotNull(result);
+
+        assertEquals(
+                0,
+                result.availableBeds()
+        );
+    }
+
+
+    @Test
+    void shouldRejectNegativeBedsWhenCreatingHospital() {
+
+        HospitalRequest request =
+                new HospitalRequest(
+                        "HOS-04",
+                        "Test Hospital",
+                        28.4000,
+                        77.0000,
+                        -5,
+                        "GENERAL"
+                );
+
+        IllegalArgumentException exception =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                hospitalService.createHospital(
+                                        request
+                                )
+                );
+
+        assertEquals(
+                "Available beds cannot be negative",
+                exception.getMessage()
+        );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
+    }
+
+
+    @Test
+    void shouldRejectNullBedsWhenCreatingHospital() {
+
+        HospitalRequest request =
+                new HospitalRequest(
+                        "HOS-04",
+                        "Test Hospital",
+                        28.4000,
+                        77.0000,
+                        null,
+                        "GENERAL"
+                );
+
+        IllegalArgumentException exception =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                hospitalService.createHospital(
+                                        request
+                                )
+                );
+
+        assertEquals(
+                "Available beds cannot be null",
+                exception.getMessage()
+        );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
+    }
+
+
+    @Test
+    void shouldRejectNullHospitalRequest() {
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        hospitalService.createHospital(
+                                null
+                        )
+        );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
+    }
+
+
+    @Test
+    void shouldRejectBlankHospitalCode() {
+
+        HospitalRequest request =
+                new HospitalRequest(
+                        "   ",
+                        "Test Hospital",
+                        28.4000,
+                        77.0000,
+                        10,
+                        "GENERAL"
+                );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        hospitalService.createHospital(
+                                request
+                        )
+        );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
+    }
+
+
+    @Test
+    void shouldRejectBlankHospitalName() {
+
+        HospitalRequest request =
+                new HospitalRequest(
+                        "HOS-04",
+                        "   ",
+                        28.4000,
+                        77.0000,
+                        10,
+                        "GENERAL"
+                );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        hospitalService.createHospital(
+                                request
+                        )
+        );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
+    }
+
+
+    @Test
+    void shouldRejectBlankFacilityType() {
+
+        HospitalRequest request =
+                new HospitalRequest(
+                        "HOS-04",
+                        "Test Hospital",
+                        28.4000,
+                        77.0000,
+                        10,
+                        "   "
+                );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        hospitalService.createHospital(
+                                request
+                        )
+        );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
+    }
+
+
     // =========================================================
-    // TEST 3
-    // =========================================================
-    //
-    // getAllHospitals() should map every hospital entity into
-    // a HospitalResponse.
-    //
+    // READ TESTS
     // =========================================================
 
     @Test
@@ -236,7 +457,6 @@ class HospitalServiceTest {
                         .facilityType("ICU")
                         .build();
 
-
         when(
                 hospitalRepository.findAll()
         ).thenReturn(
@@ -246,10 +466,8 @@ class HospitalServiceTest {
                 )
         );
 
-
         List<HospitalResponse> result =
                 hospitalService.getAllHospitals();
-
 
         assertNotNull(result);
 
@@ -257,7 +475,6 @@ class HospitalServiceTest {
                 2,
                 result.size()
         );
-
 
         assertEquals(
                 101L,
@@ -278,7 +495,6 @@ class HospitalServiceTest {
                 15,
                 result.get(0).availableBeds()
         );
-
 
         assertEquals(
                 102L,
@@ -302,14 +518,6 @@ class HospitalServiceTest {
     }
 
 
-    // =========================================================
-    // TEST 4
-    // =========================================================
-    //
-    // Getting a hospital by ID should return its response.
-    //
-    // =========================================================
-
     @Test
     void shouldGetHospitalById() {
 
@@ -319,12 +527,10 @@ class HospitalServiceTest {
                 Optional.of(hospital)
         );
 
-
         HospitalResponse result =
                 hospitalService.getHospitalById(
                         101L
                 );
-
 
         assertNotNull(result);
 
@@ -348,20 +554,11 @@ class HospitalServiceTest {
                 result.facilityType()
         );
 
-
         verify(
                 hospitalRepository
         ).findById(101L);
     }
 
-
-    // =========================================================
-    // TEST 5
-    // =========================================================
-    //
-    // Missing hospital should throw the typed exception.
-    //
-    // =========================================================
 
     @Test
     void shouldThrowExceptionWhenHospitalDoesNotExist() {
@@ -371,7 +568,6 @@ class HospitalServiceTest {
         ).thenReturn(
                 Optional.empty()
         );
-
 
         assertThrows(
                 HospitalNotFoundException.class,
@@ -384,12 +580,7 @@ class HospitalServiceTest {
 
 
     // =========================================================
-    // TEST 6
-    // =========================================================
-    //
-    // Updating available beds should save the new value and
-    // return the updated response.
-    //
+    // BED UPDATE TESTS
     // =========================================================
 
     @Test
@@ -403,17 +594,13 @@ class HospitalServiceTest {
 
         when(
                 hospitalRepository.save(hospital)
-        ).thenReturn(
-                hospital
-        );
-
+        ).thenReturn(hospital);
 
         HospitalResponse result =
                 hospitalService.updateBeds(
                         101L,
                         25
                 );
-
 
         assertNotNull(result);
 
@@ -427,23 +614,11 @@ class HospitalServiceTest {
                 hospital.getAvailableBeds()
         );
 
-
         verify(
                 hospitalRepository
         ).save(hospital);
     }
 
-
-    // =========================================================
-    // TEST 7
-    // =========================================================
-    //
-    // Zero available beds is valid.
-    //
-    // A hospital can have zero beds available; the selection
-    // service simply won't choose it.
-    //
-    // =========================================================
 
     @Test
     void shouldAllowZeroAvailableBeds() {
@@ -456,17 +631,13 @@ class HospitalServiceTest {
 
         when(
                 hospitalRepository.save(hospital)
-        ).thenReturn(
-                hospital
-        );
-
+        ).thenReturn(hospital);
 
         HospitalResponse result =
                 hospitalService.updateBeds(
                         101L,
                         0
                 );
-
 
         assertNotNull(result);
 
@@ -479,16 +650,12 @@ class HospitalServiceTest {
                 0,
                 hospital.getAvailableBeds()
         );
+
+        verify(
+                hospitalRepository
+        ).save(hospital);
     }
 
-
-    // =========================================================
-    // TEST 8
-    // =========================================================
-    //
-    // Negative bed count should be rejected.
-    //
-    // =========================================================
 
     @Test
     void shouldRejectNegativeAvailableBeds() {
@@ -498,7 +665,6 @@ class HospitalServiceTest {
         ).thenReturn(
                 Optional.of(hospital)
         );
-
 
         IllegalArgumentException exception =
                 assertThrows(
@@ -510,22 +676,82 @@ class HospitalServiceTest {
                                 )
                 );
 
-
         assertEquals(
                 "Available beds cannot be negative",
                 exception.getMessage()
         );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
     }
 
 
-    // =========================================================
-    // TEST 9
-    // =========================================================
-    //
-    // Updating beds for a missing hospital should throw the
-    // typed HospitalNotFoundException.
-    //
-    // =========================================================
+    @Test
+    void shouldRejectNullAvailableBeds() {
+
+        when(
+                hospitalRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(hospital)
+        );
+
+        IllegalArgumentException exception =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                hospitalService.updateBeds(
+                                        101L,
+                                        null
+                                )
+                );
+
+        assertEquals(
+                "Available beds cannot be null",
+                exception.getMessage()
+        );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
+    }
+
+
+    @Test
+    void shouldReturnExistingHospitalWhenBedCountIsUnchanged() {
+
+        when(
+                hospitalRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(hospital)
+        );
+
+        HospitalResponse result =
+                hospitalService.updateBeds(
+                        101L,
+                        15
+                );
+
+        assertNotNull(result);
+
+        assertEquals(
+                15,
+                result.availableBeds()
+        );
+
+        assertEquals(
+                15,
+                hospital.getAvailableBeds()
+        );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
+    }
+
 
     @Test
     void shouldThrowExceptionWhenUpdatingMissingHospital() {
@@ -536,7 +762,6 @@ class HospitalServiceTest {
                 Optional.empty()
         );
 
-
         assertThrows(
                 HospitalNotFoundException.class,
                 () ->
@@ -545,5 +770,10 @@ class HospitalServiceTest {
                                 10
                         )
         );
+
+        verify(
+                hospitalRepository,
+                never()
+        ).save(any(Hospital.class));
     }
 }
