@@ -12,8 +12,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,11 +20,12 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class EmergencyServiceTest {
 
     @Mock
@@ -36,7 +35,6 @@ class EmergencyServiceTest {
     private EmergencyService emergencyService;
 
     private Emergency emergency;
-
     private EmergencyRequest emergencyRequest;
 
 
@@ -52,7 +50,6 @@ class EmergencyServiceTest {
                         "TRAUMA",
                         "Road accident"
                 );
-
 
         emergency =
                 Emergency.builder()
@@ -78,129 +75,85 @@ class EmergencyServiceTest {
 
 
     // =========================================================
-    // TEST 1
-    // =========================================================
-    //
-    // Creating an emergency should:
-    //
-    // 1. Build the Emergency entity
-    // 2. Set status to ACTIVE
-    // 3. Save it
-    // 4. Return EmergencyResponse
-    //
+    // CREATE TESTS
     // =========================================================
 
     @Test
     void shouldCreateEmergencySuccessfully() {
 
         when(
-                emergencyRepository.save(
-                        org.mockito.Mockito.any(Emergency.class)
-                )
+                emergencyRepository.save(any(Emergency.class))
         ).thenReturn(emergency);
-
 
         EmergencyResponse result =
                 emergencyService.createEmergency(
                         emergencyRequest
                 );
 
-
         assertNotNull(result);
 
-        assertEquals(
-                101L,
-                result.id()
-        );
-
+        assertEquals(101L, result.id());
         assertEquals(
                 "Golf Course Road",
                 result.location()
         );
-
         assertEquals(
                 28.4595,
                 result.latitude()
         );
-
         assertEquals(
                 77.0266,
                 result.longitude()
         );
-
         assertEquals(
                 "HIGH",
                 result.priority()
         );
-
         assertEquals(
                 "TRAUMA",
                 result.facility()
         );
-
         assertEquals(
                 "Road accident",
                 result.notes()
         );
-
         assertEquals(
                 "ACTIVE",
                 result.status()
         );
 
-
         verify(
                 emergencyRepository
-        ).save(
-                org.mockito.Mockito.any(Emergency.class)
-        );
+        ).save(any(Emergency.class));
     }
 
-
-    // =========================================================
-    // TEST 2
-    // =========================================================
-    //
-    // Verify that createEmergency actually creates an entity
-    // with ACTIVE status before saving.
-    //
-    // =========================================================
 
     @Test
     void shouldCreateEmergencyWithActiveStatus() {
 
         when(
-                emergencyRepository.save(
-                        org.mockito.Mockito.any(Emergency.class)
-                )
+                emergencyRepository.save(any(Emergency.class))
         ).thenAnswer(
                 invocation ->
                         invocation.getArgument(0)
         );
-
 
         ArgumentCaptor<Emergency> captor =
                 ArgumentCaptor.forClass(
                         Emergency.class
                 );
 
-
         EmergencyResponse result =
                 emergencyService.createEmergency(
                         emergencyRequest
                 );
 
-
         verify(
                 emergencyRepository
-        ).save(
-                captor.capture()
-        );
-
+        ).save(captor.capture());
 
         Emergency savedEmergency =
                 captor.getValue();
-
 
         assertEquals(
                 "ACTIVE",
@@ -235,13 +188,26 @@ class EmergencyServiceTest {
     }
 
 
+    @Test
+    void shouldRejectNullEmergencyRequest() {
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        emergencyService.createEmergency(
+                                null
+                        )
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
+    }
+
+
     // =========================================================
-    // TEST 3
-    // =========================================================
-    //
-    // Get all emergencies should map every entity into an
-    // EmergencyResponse.
-    //
+    // READ TESTS
     // =========================================================
 
     @Test
@@ -268,7 +234,6 @@ class EmergencyServiceTest {
                         )
                         .build();
 
-
         when(
                 emergencyRepository.findAll()
         ).thenReturn(
@@ -278,18 +243,12 @@ class EmergencyServiceTest {
                 )
         );
 
-
         List<EmergencyResponse> result =
                 emergencyService.getAllEmergencies();
 
-
         assertNotNull(result);
 
-        assertEquals(
-                2,
-                result.size()
-        );
-
+        assertEquals(2, result.size());
 
         assertEquals(
                 101L,
@@ -305,7 +264,6 @@ class EmergencyServiceTest {
                 "ACTIVE",
                 result.get(0).status()
         );
-
 
         assertEquals(
                 102L,
@@ -324,14 +282,6 @@ class EmergencyServiceTest {
     }
 
 
-    // =========================================================
-    // TEST 4
-    // =========================================================
-    //
-    // Getting an emergency by ID should return its response.
-    //
-    // =========================================================
-
     @Test
     void shouldGetEmergencyById() {
 
@@ -341,12 +291,10 @@ class EmergencyServiceTest {
                 Optional.of(emergency)
         );
 
-
         EmergencyResponse result =
                 emergencyService.getEmergencyById(
                         101L
                 );
-
 
         assertNotNull(result);
 
@@ -375,20 +323,11 @@ class EmergencyServiceTest {
                 result.status()
         );
 
-
         verify(
                 emergencyRepository
         ).findById(101L);
     }
 
-
-    // =========================================================
-    // TEST 5
-    // =========================================================
-    //
-    // Missing emergency should throw the typed exception.
-    //
-    // =========================================================
 
     @Test
     void shouldThrowExceptionWhenEmergencyDoesNotExist() {
@@ -398,7 +337,6 @@ class EmergencyServiceTest {
         ).thenReturn(
                 Optional.empty()
         );
-
 
         assertThrows(
                 EmergencyNotFoundException.class,
@@ -411,20 +349,11 @@ class EmergencyServiceTest {
 
 
     // =========================================================
-    // TEST 6
-    // =========================================================
-    //
-    // Updating status should convert the supplied status to
-    // uppercase before saving.
-    //
-    // Example:
-    //
-    // responding → RESPONDING
-    //
+    // STATUS TRANSITION TESTS
     // =========================================================
 
     @Test
-    void shouldUpdateEmergencyStatusToUppercase() {
+    void shouldMoveEmergencyFromActiveToResponding() {
 
         when(
                 emergencyRepository.findById(101L)
@@ -436,15 +365,11 @@ class EmergencyServiceTest {
                 emergencyRepository.save(emergency)
         ).thenReturn(emergency);
 
-
         EmergencyResponse result =
                 emergencyService.updateStatus(
                         101L,
                         "responding"
                 );
-
-
-        assertNotNull(result);
 
         assertEquals(
                 "RESPONDING",
@@ -456,6 +381,42 @@ class EmergencyServiceTest {
                 emergency.getStatus()
         );
 
+        verify(
+                emergencyRepository
+        ).save(emergency);
+    }
+
+
+    @Test
+    void shouldMoveEmergencyFromRespondingToCompleted() {
+
+        emergency.setStatus("RESPONDING");
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                emergencyRepository.save(emergency)
+        ).thenReturn(emergency);
+
+        EmergencyResponse result =
+                emergencyService.updateStatus(
+                        101L,
+                        "completed"
+                );
+
+        assertEquals(
+                "COMPLETED",
+                result.status()
+        );
+
+        assertEquals(
+                "COMPLETED",
+                emergency.getStatus()
+        );
 
         verify(
                 emergencyRepository
@@ -463,12 +424,105 @@ class EmergencyServiceTest {
     }
 
 
+    @Test
+    void shouldAllowRespondingToActiveReset() {
+
+        emergency.setStatus("RESPONDING");
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                emergencyRepository.save(emergency)
+        ).thenReturn(emergency);
+
+        EmergencyResponse result =
+                emergencyService.updateStatus(
+                        101L,
+                        "active"
+                );
+
+        assertEquals(
+                "ACTIVE",
+                result.status()
+        );
+
+        assertEquals(
+                "ACTIVE",
+                emergency.getStatus()
+        );
+
+        verify(
+                emergencyRepository
+        ).save(emergency);
+    }
+
+
+    @Test
+    void shouldAcceptStatusWithWhitespaceAndMixedCase() {
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        when(
+                emergencyRepository.save(emergency)
+        ).thenReturn(emergency);
+
+        EmergencyResponse result =
+                emergencyService.updateStatus(
+                        101L,
+                        "  responding  "
+                );
+
+        assertEquals(
+                "RESPONDING",
+                result.status()
+        );
+
+        assertEquals(
+                "RESPONDING",
+                emergency.getStatus()
+        );
+    }
+
+
+    @Test
+    void shouldAllowIdempotentStatusUpdate() {
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        EmergencyResponse result =
+                emergencyService.updateStatus(
+                        101L,
+                        "active"
+                );
+
+        assertNotNull(result);
+
+        assertEquals(
+                "ACTIVE",
+                result.status()
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
+    }
+
+
     // =========================================================
-    // TEST 7
-    // =========================================================
-    //
-    // Null or blank status should be rejected.
-    //
+    // INVALID STATUS TESTS
     // =========================================================
 
     @Test
@@ -480,7 +534,6 @@ class EmergencyServiceTest {
                 Optional.of(emergency)
         );
 
-
         assertThrows(
                 IllegalArgumentException.class,
                 () ->
@@ -489,16 +542,38 @@ class EmergencyServiceTest {
                                 ""
                         )
         );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
     }
 
 
-    // =========================================================
-    // TEST 8
-    // =========================================================
-    //
-    // Null status should also be rejected.
-    //
-    // =========================================================
+    @Test
+    void shouldRejectBlankEmergencyStatus() {
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        emergencyService.updateStatus(
+                                101L,
+                                "   "
+                        )
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
+    }
+
 
     @Test
     void shouldRejectNullEmergencyStatus() {
@@ -509,7 +584,6 @@ class EmergencyServiceTest {
                 Optional.of(emergency)
         );
 
-
         assertThrows(
                 IllegalArgumentException.class,
                 () ->
@@ -518,16 +592,180 @@ class EmergencyServiceTest {
                                 null
                         )
         );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
+    }
+
+
+    @Test
+    void shouldRejectUnknownEmergencyStatus() {
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        emergencyService.updateStatus(
+                                101L,
+                                "CANCELLED"
+                        )
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
     }
 
 
     // =========================================================
-    // TEST 9
+    // INVALID TRANSITION TESTS
     // =========================================================
-    //
-    // Updating the status of a missing emergency should throw
-    // EmergencyNotFoundException.
-    //
+
+    @Test
+    void shouldRejectActiveToCompleted() {
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        emergencyService.updateStatus(
+                                101L,
+                                "COMPLETED"
+                        )
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
+    }
+
+
+    @Test
+    void shouldRejectActiveToActiveThroughSave() {
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        EmergencyResponse result =
+                emergencyService.updateStatus(
+                        101L,
+                        "ACTIVE"
+                );
+
+        assertEquals(
+                "ACTIVE",
+                result.status()
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
+    }
+
+
+    @Test
+    void shouldRejectCompletedToActive() {
+
+        emergency.setStatus("COMPLETED");
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        emergencyService.updateStatus(
+                                101L,
+                                "ACTIVE"
+                        )
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
+    }
+
+
+    @Test
+    void shouldRejectCompletedToResponding() {
+
+        emergency.setStatus("COMPLETED");
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        emergencyService.updateStatus(
+                                101L,
+                                "RESPONDING"
+                        )
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
+    }
+
+
+    @Test
+    void shouldRejectRespondingToRespondingThroughSave() {
+
+        emergency.setStatus("RESPONDING");
+
+        when(
+                emergencyRepository.findById(101L)
+        ).thenReturn(
+                Optional.of(emergency)
+        );
+
+        EmergencyResponse result =
+                emergencyService.updateStatus(
+                        101L,
+                        "RESPONDING"
+                );
+
+        assertEquals(
+                "RESPONDING",
+                result.status()
+        );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
+    }
+
+
+    // =========================================================
+    // MISSING EMERGENCY TEST
     // =========================================================
 
     @Test
@@ -539,7 +777,6 @@ class EmergencyServiceTest {
                 Optional.empty()
         );
 
-
         assertThrows(
                 EmergencyNotFoundException.class,
                 () ->
@@ -548,5 +785,10 @@ class EmergencyServiceTest {
                                 "COMPLETED"
                         )
         );
+
+        verify(
+                emergencyRepository,
+                never()
+        ).save(any(Emergency.class));
     }
 }
