@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Locale;
+
 @Service
 @RequiredArgsConstructor
 public class RoutingSettingsService {
@@ -20,6 +22,7 @@ public class RoutingSettingsService {
     // GET CURRENT ROUTING ALGORITHM
     // =========================================================
 
+    @Transactional(readOnly = true)
     public RoutingAlgorithm getRoutingAlgorithm() {
 
         return systemSettingRepository
@@ -53,6 +56,7 @@ public class RoutingSettingsService {
             );
         }
 
+
         SystemSetting setting =
                 systemSettingRepository
                         .findBySettingKey(
@@ -66,13 +70,14 @@ public class RoutingSettingsService {
                                         .build()
                         );
 
+
         setting.setSettingValue(
                 algorithm.name()
         );
 
-        systemSettingRepository.save(
-                setting
-        );
+
+        systemSettingRepository.save(setting);
+
 
         return algorithm;
     }
@@ -86,13 +91,25 @@ public class RoutingSettingsService {
             String value
     ) {
 
+        if (value == null || value.isBlank()) {
+
+            return RoutingAlgorithm.DIJKSTRA;
+        }
+
+
         try {
 
             return RoutingAlgorithm.valueOf(
-                    value
+                    value.trim()
+                            .toUpperCase(Locale.ROOT)
             );
 
         } catch (IllegalArgumentException exception) {
+
+            // -------------------------------------------------
+            // Invalid persisted configuration falls back to the
+            // safe production default.
+            // -------------------------------------------------
 
             return RoutingAlgorithm.DIJKSTRA;
         }
