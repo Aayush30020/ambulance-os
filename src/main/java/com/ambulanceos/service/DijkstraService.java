@@ -1,6 +1,7 @@
 package com.ambulanceos.service;
 
 import com.ambulanceos.dto.DijkstraResponse;
+import com.ambulanceos.exception.RouteNotFoundException;
 import com.ambulanceos.graph.GraphEdge;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import lombok.RequiredArgsConstructor;
@@ -39,30 +40,24 @@ public class DijkstraService {
     //
     //     Real Gurgaon OSM road graph
     //
-    // The graph can contain hundreds of thousands of nodes,
-    // therefore we only store nodes discovered by Dijkstra
-    // inside the HashMaps.
+    // This endpoint performs basic distance-based Dijkstra.
+    // Traffic-aware routing is handled separately by
+    // TrafficAwareDijkstraService.
     // =========================================================
 
     public DijkstraResponse findShortestPath(
-
             String sourceNode,
-
             String destinationNode
-
     ) {
 
         // =====================================================
         // 1. VALIDATE SOURCE NODE
         // =====================================================
 
-        if (
-                roadGraph.getNode(sourceNode) == null
-        ) {
+        if (roadGraph.getNode(sourceNode) == null) {
 
-            throw new RuntimeException(
-                    "Source node not found: "
-                            + sourceNode
+            throw new RouteNotFoundException(
+                    "Source node not found: " + sourceNode
             );
         }
 
@@ -71,11 +66,9 @@ public class DijkstraService {
         // 2. VALIDATE DESTINATION NODE
         // =====================================================
 
-        if (
-                roadGraph.getNode(destinationNode) == null
-        ) {
+        if (roadGraph.getNode(destinationNode) == null) {
 
-            throw new RuntimeException(
+            throw new RouteNotFoundException(
                     "Destination node not found: "
                             + destinationNode
             );
@@ -88,13 +81,6 @@ public class DijkstraService {
         //
         // Stores the shortest known distance from the source
         // to every discovered node.
-        //
-        // Example:
-        //
-        // source -> A = 1.2 km
-        // source -> B = 2.7 km
-        // source -> C = 4.1 km
-        //
         // =====================================================
 
         Map<String, Double> distances =
@@ -108,10 +94,6 @@ public class DijkstraService {
         // Used to reconstruct the final shortest path.
         //
         // Example:
-        //
-        // C <- B <- A <- SOURCE
-        //
-        // previousNodes contains:
         //
         // C -> B
         // B -> A
@@ -129,10 +111,6 @@ public class DijkstraService {
         //
         // Always processes the node with the smallest
         // currently known distance.
-        //
-        // This is the main data structure that makes
-        // Dijkstra efficient.
-        //
         // =====================================================
 
         PriorityQueue<NodeDistance> priorityQueue =
@@ -152,7 +130,6 @@ public class DijkstraService {
                 0.0
         );
 
-
         priorityQueue.offer(
                 new NodeDistance(
                         sourceNode,
@@ -165,21 +142,13 @@ public class DijkstraService {
         // 7. MAIN DIJKSTRA LOOP
         // =====================================================
 
-        while (
-                !priorityQueue.isEmpty()
-        ) {
-
-            // -------------------------------------------------
-            // Get node with smallest distance.
-            // -------------------------------------------------
+        while (!priorityQueue.isEmpty()) {
 
             NodeDistance current =
                     priorityQueue.poll();
 
-
             String currentNode =
                     current.nodeId();
-
 
             double currentDistance =
                     current.distance();
@@ -189,21 +158,8 @@ public class DijkstraService {
             // STALE ENTRY CHECK
             // -------------------------------------------------
             //
-            // A node may appear multiple times in the
-            // PriorityQueue.
-            //
-            // Example:
-            //
-            // B = 10 km
-            //
-            // Later we discover:
-            //
-            // B = 6 km
-            //
-            // Both entries remain in the queue.
-            //
-            // When the old 10 km entry comes out, we ignore it.
-            //
+            // A node may appear multiple times in the queue.
+            // Ignore entries that are no longer optimal.
             // -------------------------------------------------
 
             double bestKnownDistance =
@@ -212,12 +168,7 @@ public class DijkstraService {
                             Double.POSITIVE_INFINITY
                     );
 
-
-            if (
-                    currentDistance
-                            > bestKnownDistance
-            ) {
-
+            if (currentDistance > bestKnownDistance) {
                 continue;
             }
 
@@ -226,18 +177,12 @@ public class DijkstraService {
             // DESTINATION REACHED
             // -------------------------------------------------
             //
-            // Because this is a min PriorityQueue, when the
-            // destination is removed from the queue, its
-            // shortest distance is finalized.
-            //
+            // Since the PriorityQueue is ordered by distance,
+            // the first time the destination is removed from
+            // the queue, its shortest distance is finalized.
             // -------------------------------------------------
 
-            if (
-                    currentNode.equals(
-                            destinationNode
-                    )
-            ) {
-
+            if (currentNode.equals(destinationNode)) {
                 break;
             }
 
@@ -256,10 +201,7 @@ public class DijkstraService {
             // 9. RELAX EVERY EDGE
             // =================================================
 
-            for (
-                    GraphEdge edge :
-                    neighbors
-            ) {
+            for (GraphEdge edge : neighbors) {
 
                 String neighbor =
                         edge.destinationNodeId();
@@ -288,31 +230,18 @@ public class DijkstraService {
                 // -------------------------------------------------
                 // RELAXATION
                 // -------------------------------------------------
-                //
-                // If this route is shorter:
-                //
-                // 1. Update distance
-                // 2. Store previous node
-                // 3. Add new value to PriorityQueue
-                //
-                // -------------------------------------------------
 
-                if (
-                        newDistance
-                                < knownDistance
-                ) {
+                if (newDistance < knownDistance) {
 
                     distances.put(
                             neighbor,
                             newDistance
                     );
 
-
                     previousNodes.put(
                             neighbor,
                             currentNode
                     );
-
 
                     priorityQueue.offer(
                             new NodeDistance(
@@ -335,9 +264,9 @@ public class DijkstraService {
                 );
 
 
-        // -----------------------------------------------------
-        // No route found
-        // -----------------------------------------------------
+        // =====================================================
+        // 11. NO ROUTE FOUND
+        // =====================================================
 
         if (
                 shortestDistance == null
@@ -346,7 +275,7 @@ public class DijkstraService {
                 )
         ) {
 
-            throw new RuntimeException(
+            throw new RouteNotFoundException(
                     "No route exists between "
                             + sourceNode
                             + " and "
@@ -356,51 +285,28 @@ public class DijkstraService {
 
 
         // =====================================================
-        // 11. RECONSTRUCT PATH
-        // =====================================================
-        //
-        // IMPORTANT:
-        //
-        // We return the actual OSM node IDs directly.
-        //
-        // There is NO:
-        //
-        // coordinates -> node ID
-        //
-        // conversion anymore.
-        //
-        // Therefore there is no UNKNOWN problem.
-        //
+        // 12. RECONSTRUCT PATH
         // =====================================================
 
         List<String> path =
                 reconstructPath(
-
                         sourceNode,
-
                         destinationNode,
-
                         previousNodes
-
                 );
 
 
         // =====================================================
-        // 12. RETURN DIJKSTRA RESULT
+        // 13. RETURN DIJKSTRA RESULT
         // =====================================================
 
         return new DijkstraResponse(
-
                 sourceNode,
-
                 destinationNode,
-
                 roundToTwoDecimals(
                         shortestDistance
                 ),
-
                 path
-
         );
     }
 
@@ -408,77 +314,34 @@ public class DijkstraService {
     // =========================================================
     // RECONSTRUCT SHORTEST PATH
     // =========================================================
-    //
-    // We start from the destination and move backwards using
-    // previousNodes.
-    //
-    // Example:
-    //
-    // destination
-    //      ↑
-    //      |
-    //     C
-    //      ↑
-    //      |
-    //     B
-    //      ↑
-    //      |
-    //     A
-    //      ↑
-    //      |
-    //    SOURCE
-    //
-    // Backwards:
-    //
-    // destination -> C -> B -> A -> source
-    //
-    // Then reverse it:
-    //
-    // source -> A -> B -> C -> destination
-    //
-    // =========================================================
 
     private List<String> reconstructPath(
-
             String sourceNode,
-
             String destinationNode,
-
             Map<String, String> previousNodes
-
     ) {
 
         List<String> path =
                 new ArrayList<>();
-
 
         String current =
                 destinationNode;
 
 
         // -----------------------------------------------------
-        // Walk backwards.
+        // Walk backwards from destination to source.
         // -----------------------------------------------------
 
-        while (
-                current != null
-        ) {
+        while (current != null) {
 
-            path.add(
-                    current
-            );
+            path.add(current);
 
 
             // -------------------------------------------------
-            // We reached the source.
+            // Source reached.
             // -------------------------------------------------
 
-            if (
-                    current.equals(
-                            sourceNode
-                    )
-            ) {
-
+            if (current.equals(sourceNode)) {
                 break;
             }
 
@@ -491,12 +354,12 @@ public class DijkstraService {
 
 
         // -----------------------------------------------------
-        // Reverse path.
+        // Reverse path so that it becomes:
+        //
+        // source -> ... -> destination
         // -----------------------------------------------------
 
-        Collections.reverse(
-                path
-        );
+        Collections.reverse(path);
 
 
         // -----------------------------------------------------
@@ -510,8 +373,11 @@ public class DijkstraService {
                 )
         ) {
 
-            throw new RuntimeException(
-                    "Unable to reconstruct route"
+            throw new RouteNotFoundException(
+                    "Unable to reconstruct route from "
+                            + sourceNode
+                            + " to "
+                            + destinationNode
             );
         }
 
@@ -539,11 +405,8 @@ public class DijkstraService {
     // =========================================================
 
     private record NodeDistance(
-
             String nodeId,
-
             double distance
-
     ) {
     }
 }
