@@ -1,10 +1,12 @@
 package com.ambulanceos.service;
 
 import com.ambulanceos.dto.TrafficDijkstraResponse;
+import com.ambulanceos.exception.RouteNotFoundException;
 import com.ambulanceos.graph.GraphEdge;
 import com.ambulanceos.graph.GraphNode;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -19,6 +21,7 @@ import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AStarService {
 
     private final GurgaonRoadGraph roadGraph;
@@ -28,11 +31,13 @@ public class AStarService {
     /*
      * Cached maximum speed of the road graph.
      *
-     * We calculate this only once because scanning all
-     * ~332,000 edges every time A* calculates a heuristic
-     * would be inefficient.
+     * The graph contains hundreds of thousands of edges, so
+     * scanning the entire graph for every A* request would be
+     * unnecessarily expensive.
+     *
+     * The value is calculated once and then reused.
      */
-    private Double maximumGraphSpeedKmh;
+    private volatile Double maximumGraphSpeedKmh;
 
 
     // =========================================================
@@ -44,13 +49,13 @@ public class AStarService {
     //      f(n) = g(n) + h(n)
     //
     // g(n) = actual traffic-adjusted travel time from
-    //        the source to the current node.
+    //        source to current node.
     //
     // h(n) = estimated minimum remaining travel time from
-    //        the current node to the destination.
+    //        current node to destination.
     //
-    // Unlike Dijkstra, A* uses h(n) to guide the search
-    // toward the destination.
+    // Unlike Dijkstra, A* uses the heuristic to guide the
+    // search toward the destination.
     //
     // =========================================================
 
@@ -65,7 +70,7 @@ public class AStarService {
 
         if (roadGraph.getNode(sourceNode) == null) {
 
-            throw new RuntimeException(
+            throw new RouteNotFoundException(
                     "Source node not found: "
                             + sourceNode
             );
@@ -78,7 +83,7 @@ public class AStarService {
 
         if (roadGraph.getNode(destinationNode) == null) {
 
-            throw new RuntimeException(
+            throw new RouteNotFoundException(
                     "Destination node not found: "
                             + destinationNode
             );
@@ -92,8 +97,8 @@ public class AStarService {
         // distances[node] = physical road distance from
         // source to that node.
         //
-        // This is separate from the A* cost because the
-        // algorithm is optimizing travel time, not distance.
+        // A* optimizes travel time, so this is maintained
+        // separately for the API response.
         //
         // =====================================================
 
@@ -118,7 +123,7 @@ public class AStarService {
         // 5. STORE PREVIOUS NODES
         // =====================================================
         //
-        // Used later to reconstruct the final route.
+        // Used to reconstruct the final route.
         //
         // =====================================================
 
@@ -201,7 +206,6 @@ public class AStarService {
             NodeScore current =
                     priorityQueue.poll();
 
-
             String currentNode =
                     current.nodeId();
 
@@ -253,8 +257,7 @@ public class AStarService {
             // 11. EXPLORE EACH NEIGHBOR
             // =================================================
 
-            for (GraphEdge edge :
-                    neighbors) {
+            for (GraphEdge edge : neighbors) {
 
                 String neighbor =
                         edge.destinationNodeId();
@@ -294,8 +297,6 @@ public class AStarService {
 
                 // -------------------------------------------------
                 // Traffic-adjusted travel time for this edge.
-                //
-                // This is the actual edge cost used by A*.
                 // -------------------------------------------------
 
                 double edgeCost =
@@ -305,11 +306,6 @@ public class AStarService {
 
                 // =================================================
                 // 12. CALCULATE NEW G COST
-                // =================================================
-                //
-                // g(newNode) =
-                //      g(currentNode) + edge cost
-                //
                 // =================================================
 
                 double currentGCost =
@@ -386,10 +382,6 @@ public class AStarService {
                     // =================================================
                     // 15. CALCULATE HEURISTIC
                     // =================================================
-                    //
-                    // h(n) = estimated remaining travel time.
-                    //
-                    // =================================================
 
                     double heuristic =
                             heuristicMinutes(
@@ -400,10 +392,6 @@ public class AStarService {
 
                     // =================================================
                     // 16. CALCULATE F SCORE
-                    // =================================================
-                    //
-                    // f(n) = g(n) + h(n)
-                    //
                     // =================================================
 
                     double fScore =
@@ -442,7 +430,7 @@ public class AStarService {
                 destinationCost
         )) {
 
-            throw new RuntimeException(
+            throw new RouteNotFoundException(
                     "No A* route exists between "
                             + sourceNode
                             + " and "
@@ -488,23 +476,17 @@ public class AStarService {
         // =====================================================
 
         return new TrafficDijkstraResponse(
-
                 sourceNode,
-
                 destinationNode,
-
                 roundToTwoDecimals(
                         distances.get(
                                 destinationNode
                         )
                 ),
-
                 roundToTwoDecimals(
                         estimatedTravelTimeMinutes
                 ),
-
                 overallTrafficLevel,
-
                 path
         );
     }
@@ -514,17 +496,15 @@ public class AStarService {
     // A* HEURISTIC
     // =========================================================
     //
-    // We calculate:
-    //
     //      straight-line distance
-    //                    ----------------
-    //                    maximum graph speed
+    //      -----------------------
+    //       maximum graph speed
     //
-    // and convert the result into minutes.
+    // converted into minutes.
     //
     // The straight-line distance is calculated using Haversine.
     //
-    // The maximum speed comes from the actual road graph,
+    // The maximum speed is derived from the actual road graph
     // rather than using an arbitrary hard-coded value.
     //
     // =========================================================
@@ -538,7 +518,6 @@ public class AStarService {
                 roadGraph.getNode(
                         currentNodeId
                 );
-
 
         GraphNode destination =
                 roadGraph.getNode(
@@ -587,125 +566,125 @@ public class AStarService {
     // GET MAXIMUM SPEED FROM GRAPH
     // =========================================================
     //
-    // We calculate the speed of every edge:
+    // speed = distance / time
     //
-    //      speed = distance / time
-    //
-    // Then take the maximum.
-    //
-    // The result is cached so this expensive operation only
-    // happens once during the application's lifetime.
+    // The result is calculated once and cached.
     //
     // =========================================================
 
     private double getMaximumGraphSpeedKmh() {
 
         // -----------------------------------------------------
-        // Return cached value if already calculated.
+        // Fast path: cached value already available.
         // -----------------------------------------------------
 
-        if (maximumGraphSpeedKmh != null) {
+        Double cachedSpeed =
+                maximumGraphSpeedKmh;
+
+        if (cachedSpeed != null) {
+            return cachedSpeed;
+        }
+
+
+        // -----------------------------------------------------
+        // Synchronize initialization so concurrent requests
+        // do not all scan the entire graph simultaneously.
+        // -----------------------------------------------------
+
+        synchronized (this) {
+
+            // Another request may have initialized the value
+            // while this thread was waiting for the lock.
+
+            if (maximumGraphSpeedKmh != null) {
+                return maximumGraphSpeedKmh;
+            }
+
+
+            double maximumSpeed =
+                    0.0;
+
+
+            // -------------------------------------------------
+            // Scan every node.
+            // -------------------------------------------------
+
+            for (GraphNode node :
+                    roadGraph.getNodes().values()) {
+
+                List<GraphEdge> neighbors =
+                        roadGraph.getNeighbors(
+                                node.id()
+                        );
+
+
+                // -------------------------------------------------
+                // Scan every outgoing edge.
+                // -------------------------------------------------
+
+                for (GraphEdge edge :
+                        neighbors) {
+
+                    // Avoid division by zero.
+
+                    if (edge.travelTimeMinutes() <= 0) {
+                        continue;
+                    }
+
+
+                    // Calculate speed represented by this edge.
+
+                    double speedKmh =
+                            edge.distanceKm()
+                                    /
+                                    (
+                                            edge.travelTimeMinutes()
+                                                    / 60.0
+                                    );
+
+
+                    maximumSpeed =
+                            Math.max(
+                                    maximumSpeed,
+                                    speedKmh
+                            );
+                }
+            }
+
+
+            // -------------------------------------------------
+            // Make sure a valid speed was found.
+            // -------------------------------------------------
+
+            if (maximumSpeed <= 0.0) {
+
+                throw new IllegalStateException(
+                        "Unable to determine maximum graph speed"
+                );
+            }
+
+
+            // -------------------------------------------------
+            // Cache the value.
+            // -------------------------------------------------
+
+            maximumGraphSpeedKmh =
+                    maximumSpeed;
+
+
+            log.info(
+                    "A* maximum graph speed calculated: {} km/h",
+                    maximumGraphSpeedKmh
+            );
+
 
             return maximumGraphSpeedKmh;
         }
-
-
-        double maximumSpeed =
-                0.0;
-
-
-        // -----------------------------------------------------
-        // Scan every node.
-        // -----------------------------------------------------
-
-        for (GraphNode node :
-                roadGraph.getNodes().values()) {
-
-            List<GraphEdge> neighbors =
-                    roadGraph.getNeighbors(
-                            node.id()
-                    );
-
-
-            // -------------------------------------------------
-            // Scan every outgoing edge.
-            // -------------------------------------------------
-
-            for (GraphEdge edge :
-                    neighbors) {
-
-                // Avoid division by zero.
-
-                if (edge.travelTimeMinutes() <= 0) {
-
-                    continue;
-                }
-
-
-                // Calculate speed represented by this edge.
-
-                double speedKmh =
-                        edge.distanceKm()
-                                /
-                                (
-                                        edge.travelTimeMinutes()
-                                                / 60.0
-                                );
-
-
-                // Keep the maximum speed.
-
-                maximumSpeed =
-                        Math.max(
-                                maximumSpeed,
-                                speedKmh
-                        );
-            }
-        }
-
-
-        // -----------------------------------------------------
-        // Make sure a valid speed was found.
-        // -----------------------------------------------------
-
-        if (maximumSpeed <= 0.0) {
-
-            throw new RuntimeException(
-                    "Unable to determine maximum graph speed"
-            );
-        }
-
-
-        // -----------------------------------------------------
-        // Cache the value.
-        // -----------------------------------------------------
-
-        maximumGraphSpeedKmh =
-                maximumSpeed;
-
-
-        // -----------------------------------------------------
-        // Print it once so we can verify it.
-        // -----------------------------------------------------
-
-        System.out.println(
-                "A* maximum graph speed: "
-                        + maximumGraphSpeedKmh
-                        + " km/h"
-        );
-
-
-        return maximumGraphSpeedKmh;
     }
 
 
     // =========================================================
     // HAVERSINE DISTANCE
-    // =========================================================
-    //
-    // Calculates straight-line distance between two
-    // geographical coordinates.
-    //
     // =========================================================
 
     private double haversineDistance(
@@ -747,26 +726,21 @@ public class AStarService {
                 Math.sin(
                         latitudeDifference / 2
                 )
-                        *
-                        Math.sin(
-                                latitudeDifference / 2
-                        )
-                        +
-                        Math.cos(
-                                firstLatitude
-                        )
-                                *
-                                Math.cos(
-                                        secondLatitude
-                                )
-                                *
-                                Math.sin(
-                                        longitudeDifference / 2
-                                )
-                                *
-                                Math.sin(
-                                        longitudeDifference / 2
-                                );
+                        * Math.sin(
+                        latitudeDifference / 2
+                )
+                        + Math.cos(
+                        firstLatitude
+                )
+                        * Math.cos(
+                        secondLatitude
+                )
+                        * Math.sin(
+                        longitudeDifference / 2
+                )
+                        * Math.sin(
+                        longitudeDifference / 2
+                );
 
 
         double c =
@@ -843,8 +817,11 @@ public class AStarService {
                 )
         ) {
 
-            throw new RuntimeException(
-                    "Unable to reconstruct A* route"
+            throw new RouteNotFoundException(
+                    "Unable to reconstruct A* route from "
+                            + sourceNode
+                            + " to "
+                            + destinationNode
             );
         }
 
@@ -876,7 +853,6 @@ public class AStarService {
 
             String source =
                     path.get(i);
-
 
             String destination =
                     path.get(i + 1);
@@ -938,7 +914,7 @@ public class AStarService {
         }
 
 
-        throw new RuntimeException(
+        throw new RouteNotFoundException(
                 "Road edge not found between "
                         + sourceNode
                         + " and "
@@ -958,7 +934,6 @@ public class AStarService {
         // No roads means LOW traffic.
 
         if (path.size() < 2) {
-
             return "LOW";
         }
 
@@ -1021,13 +996,9 @@ public class AStarService {
     // =========================================================
 
     private record NodeScore(
-
             String nodeId,
-
             double gScore,
-
             double fScore
-
     ) {
     }
 }
