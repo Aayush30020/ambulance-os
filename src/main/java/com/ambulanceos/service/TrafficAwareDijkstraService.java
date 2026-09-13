@@ -1,6 +1,7 @@
 package com.ambulanceos.service;
 
 import com.ambulanceos.dto.TrafficDijkstraResponse;
+import com.ambulanceos.exception.RouteNotFoundException;
 import com.ambulanceos.graph.GraphEdge;
 import com.ambulanceos.graph.GurgaonRoadGraph;
 import lombok.RequiredArgsConstructor;
@@ -58,11 +59,8 @@ public class TrafficAwareDijkstraService {
     // =========================================================
 
     public TrafficDijkstraResponse findShortestPath(
-
             String sourceNode,
-
             String destinationNode
-
     ) {
 
         // =====================================================
@@ -71,9 +69,8 @@ public class TrafficAwareDijkstraService {
 
         if (roadGraph.getNode(sourceNode) == null) {
 
-            throw new RuntimeException(
-                    "Source node not found: "
-                            + sourceNode
+            throw new RouteNotFoundException(
+                    "Source node not found: " + sourceNode
             );
         }
 
@@ -84,9 +81,8 @@ public class TrafficAwareDijkstraService {
 
         if (roadGraph.getNode(destinationNode) == null) {
 
-            throw new RuntimeException(
-                    "Destination node not found: "
-                            + destinationNode
+            throw new RouteNotFoundException(
+                    "Destination node not found: " + destinationNode
             );
         }
 
@@ -363,7 +359,7 @@ public class TrafficAwareDijkstraService {
                 destinationCost
         )) {
 
-            throw new RuntimeException(
+            throw new RouteNotFoundException(
                     "No traffic-aware route exists between "
                             + sourceNode
                             + " and "
@@ -427,7 +423,6 @@ public class TrafficAwareDijkstraService {
                 overallTrafficLevel,
 
                 path
-
         );
     }
 
@@ -437,13 +432,9 @@ public class TrafficAwareDijkstraService {
     // =========================================================
 
     private List<String> reconstructPath(
-
             String sourceNode,
-
             String destinationNode,
-
             Map<String, String> previousNodes
-
     ) {
 
         List<String> path =
@@ -488,7 +479,7 @@ public class TrafficAwareDijkstraService {
                 )
         ) {
 
-            throw new RuntimeException(
+            throw new RouteNotFoundException(
                     "Unable to reconstruct traffic-aware route"
             );
         }
@@ -561,11 +552,8 @@ public class TrafficAwareDijkstraService {
     // =========================================================
 
     private GraphEdge findEdge(
-
             String sourceNode,
-
             String destinationNode
-
     ) {
 
         for (GraphEdge edge :
@@ -583,7 +571,7 @@ public class TrafficAwareDijkstraService {
         }
 
 
-        throw new RuntimeException(
+        throw new RouteNotFoundException(
                 "Road edge not found between "
                         + sourceNode
                         + " and "
@@ -597,9 +585,7 @@ public class TrafficAwareDijkstraService {
     // =========================================================
 
     private String calculateOverallTrafficLevel(
-
             List<String> path
-
     ) {
 
         if (path.size() < 2) {
@@ -660,11 +646,8 @@ public class TrafficAwareDijkstraService {
     // =========================================================
 
     private record NodeCost(
-
             String nodeId,
-
             double cost
-
     ) {
     }
 }
