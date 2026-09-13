@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.idea
+.vscode
+
+# Maven
+target
+
+# Frontend
+frontend
+node_modules
+
+# Local database backup
+*.dump
+
+# OSM source/reference files not required at runtime
+data/osm/gurgaon_roads.osm
+data/osm/gurgaon_roads.ql
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
