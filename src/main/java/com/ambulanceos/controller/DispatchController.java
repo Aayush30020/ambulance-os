@@ -20,9 +20,10 @@ public class DispatchController {
     // GET
     // /api/dispatch/ambulance/{emergencyId}
     //
-    // Does NOT change ambulance status.
+    // Finds the best AVAILABLE ambulance for an emergency.
     //
-    // It only calculates which AVAILABLE ambulance is best.
+    // This endpoint only calculates the best ambulance.
+    // It does NOT change the ambulance status.
     //
     // =========================================================
 
@@ -44,9 +45,11 @@ public class DispatchController {
     // POST
     // /api/dispatch/{emergencyId}
     //
-    // Finds the best ambulance and changes:
+    // Finds the best available ambulance and changes:
     //
-    // AVAILABLE → EN_ROUTE
+    // AVAILABLE
+    //      ↓
+    // EN_ROUTE
     //
     // =========================================================
 
