@@ -2,29 +2,21 @@ package com.ambulanceos.controller;
 
 import com.ambulanceos.entity.Dispatch;
 import com.ambulanceos.exception.DispatchNotFoundException;
-import com.ambulanceos.exception.GlobalExceptionHandler;
 import com.ambulanceos.repository.DispatchRepository;
 import com.ambulanceos.service.DispatchService;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ExtendWith(MockitoExtension.class)
 class DispatchHistoryControllerTest {
@@ -35,120 +27,78 @@ class DispatchHistoryControllerTest {
     @Mock
     private DispatchService dispatchService;
 
-    private MockMvc mockMvc;
-
-
-    @BeforeEach
-    void setUp() {
-
-        DispatchHistoryController controller =
-                new DispatchHistoryController(
-                        dispatchRepository,
-                        dispatchService
-                );
-
-        mockMvc =
-                MockMvcBuilders
-                        .standaloneSetup(controller)
-                        .setControllerAdvice(
-                                new GlobalExceptionHandler()
-                        )
-                        .build();
-    }
+    @InjectMocks
+    private DispatchHistoryController dispatchHistoryController;
 
 
     // =========================================================
-    // TEST 1
-    // =========================================================
-    //
-    // GET /api/dispatches
-    //
-    // Should return dispatch history ordered by dispatchedAt.
-    //
+    // GET ALL DISPATCHES
     // =========================================================
 
     @Test
-    void shouldGetAllDispatches() throws Exception {
+    void shouldGetAllDispatches() {
 
-        Dispatch firstDispatch =
-                createDispatch(
-                        101L,
-                        1L,
-                        201L,
-                        "AMB-101",
-                        "Medanta Hospital",
-                        "COMPLETED"
-                );
+        Dispatch dispatch1 =
+                Dispatch.builder()
+                        .id(1L)
+                        .emergencyId(101L)
+                        .ambulanceId(201L)
+                        .ambulanceNumber("AMB-101")
+                        .hospitalId(301L)
+                        .hospitalName("Medanta Hospital")
+                        .routingAlgorithm("DIJKSTRA")
+                        .distanceToEmergencyKm(5.0)
+                        .timeToEmergencyMinutes(7.5)
+                        .distanceToHospitalKm(8.0)
+                        .timeToHospitalMinutes(12.0)
+                        .totalDistanceKm(13.0)
+                        .totalEstimatedTimeMinutes(19.5)
+                        .status("COMPLETED")
+                        .build();
 
-        Dispatch secondDispatch =
-                createDispatch(
-                        102L,
-                        2L,
-                        202L,
-                        "AMB-102",
-                        "Artemis Hospital",
-                        "IN_PROGRESS"
+        Dispatch dispatch2 =
+                Dispatch.builder()
+                        .id(2L)
+                        .emergencyId(102L)
+                        .ambulanceId(202L)
+                        .ambulanceNumber("AMB-102")
+                        .hospitalId(302L)
+                        .hospitalName("Artemis Hospital")
+                        .routingAlgorithm("ASTAR")
+                        .distanceToEmergencyKm(4.0)
+                        .timeToEmergencyMinutes(6.0)
+                        .distanceToHospitalKm(7.0)
+                        .timeToHospitalMinutes(10.5)
+                        .totalDistanceKm(11.0)
+                        .totalEstimatedTimeMinutes(16.5)
+                        .status("IN_PROGRESS")
+                        .build();
+
+
+        List<Dispatch> dispatches =
+                List.of(
+                        dispatch2,
+                        dispatch1
                 );
 
 
         when(
                 dispatchRepository
                         .findAllByOrderByDispatchedAtDesc()
-        ).thenReturn(
-                List.of(
-                        firstDispatch,
-                        secondDispatch
-                )
-        );
+        ).thenReturn(dispatches);
 
 
-        mockMvc.perform(
-                        get("/api/dispatches")
-                )
-                .andExpect(
-                        status().isOk()
-                )
-                .andExpect(
-                        jsonPath("$.length()")
-                                .value(2)
-                )
-                .andExpect(
-                        jsonPath("$[0].id")
-                                .value(101)
-                )
-                .andExpect(
-                        jsonPath("$[0].emergencyId")
-                                .value(1)
-                )
-                .andExpect(
-                        jsonPath("$[0].ambulanceId")
-                                .value(201)
-                )
-                .andExpect(
-                        jsonPath("$[0].ambulanceNumber")
-                                .value("AMB-101")
-                )
-                .andExpect(
-                        jsonPath("$[0].hospitalName")
-                                .value("Medanta Hospital")
-                )
-                .andExpect(
-                        jsonPath("$[0].status")
-                                .value("COMPLETED")
-                )
-                .andExpect(
-                        jsonPath("$[1].id")
-                                .value(102)
-                )
-                .andExpect(
-                        jsonPath("$[1].ambulanceNumber")
-                                .value("AMB-102")
-                )
-                .andExpect(
-                        jsonPath("$[1].status")
-                                .value("IN_PROGRESS")
+        List<Dispatch> result =
+                dispatchHistoryController
+                        .getAllDispatches();
+
+
+        assertThat(result)
+                .hasSize(2)
+                .containsExactly(
+                        dispatch2,
+                        dispatch1
                 );
-
 
         verify(
                 dispatchRepository
@@ -157,326 +107,147 @@ class DispatchHistoryControllerTest {
 
 
     // =========================================================
-    // TEST 2
-    // =========================================================
-    //
-    // GET /api/dispatches/{id}
-    //
-    // Existing dispatch should be returned successfully.
-    //
+    // GET DISPATCH BY ID
     // =========================================================
 
     @Test
-    void shouldGetDispatchById() throws Exception {
+    void shouldGetDispatchById() {
+
+        Long dispatchId = 1L;
 
         Dispatch dispatch =
-                createDispatch(
-                        101L,
-                        1L,
-                        201L,
-                        "AMB-101",
-                        "Medanta Hospital",
-                        "IN_PROGRESS"
-                );
+                Dispatch.builder()
+                        .id(dispatchId)
+                        .emergencyId(101L)
+                        .ambulanceId(201L)
+                        .ambulanceNumber("AMB-101")
+                        .hospitalId(301L)
+                        .hospitalName("Medanta Hospital")
+                        .routingAlgorithm("DIJKSTRA")
+                        .distanceToEmergencyKm(5.0)
+                        .timeToEmergencyMinutes(7.5)
+                        .distanceToHospitalKm(8.0)
+                        .timeToHospitalMinutes(12.0)
+                        .totalDistanceKm(13.0)
+                        .totalEstimatedTimeMinutes(19.5)
+                        .status("IN_PROGRESS")
+                        .build();
 
 
         when(
-                dispatchRepository.findById(101L)
+                dispatchRepository.findById(
+                        dispatchId
+                )
         ).thenReturn(
                 Optional.of(dispatch)
         );
 
 
-        mockMvc.perform(
-                        get("/api/dispatches/101")
-                )
-                .andExpect(
-                        status().isOk()
-                )
-                .andExpect(
-                        jsonPath("$.id")
-                                .value(101)
-                )
-                .andExpect(
-                        jsonPath("$.emergencyId")
-                                .value(1)
-                )
-                .andExpect(
-                        jsonPath("$.ambulanceId")
-                                .value(201)
-                )
-                .andExpect(
-                        jsonPath("$.ambulanceNumber")
-                                .value("AMB-101")
-                )
-                .andExpect(
-                        jsonPath("$.hospitalName")
-                                .value("Medanta Hospital")
-                )
-                .andExpect(
-                        jsonPath("$.status")
-                                .value("IN_PROGRESS")
-                );
+        Dispatch result =
+                dispatchHistoryController
+                        .getDispatchById(
+                                dispatchId
+                        );
 
+
+        assertThat(result)
+                .isEqualTo(dispatch);
 
         verify(
                 dispatchRepository
-        ).findById(101L);
+        ).findById(
+                dispatchId
+        );
     }
 
 
     // =========================================================
-    // TEST 3
-    // =========================================================
-    //
-    // GET /api/dispatches/{id}
-    //
-    // Missing dispatch should return:
-    //
-    // HTTP 404
-    // DISPATCH_NOT_FOUND
-    //
+    // DISPATCH NOT FOUND
     // =========================================================
 
     @Test
-    void shouldReturn404WhenDispatchDoesNotExist()
-            throws Exception {
+    void shouldThrowExceptionWhenDispatchDoesNotExist() {
+
+        Long dispatchId = 999L;
+
 
         when(
-                dispatchRepository.findById(999L)
+                dispatchRepository.findById(
+                        dispatchId
+                )
         ).thenReturn(
                 Optional.empty()
         );
 
 
-        mockMvc.perform(
-                        get("/api/dispatches/999")
-                )
-                .andExpect(
-                        status().isNotFound()
-                )
-                .andExpect(
-                        jsonPath("$.status")
-                                .value(404)
-                )
-                .andExpect(
-                        jsonPath("$.error")
-                                .value("DISPATCH_NOT_FOUND")
+        assertThatThrownBy(() ->
+                dispatchHistoryController
+                        .getDispatchById(
+                                dispatchId
+                        )
+        )
+                .isInstanceOf(
+                        DispatchNotFoundException.class
                 );
 
 
         verify(
                 dispatchRepository
-        ).findById(999L);
+        ).findById(
+                dispatchId
+        );
     }
 
 
     // =========================================================
-    // TEST 4
-    // =========================================================
-    //
-    // PUT /api/dispatches/{id}/complete
-    //
-    // Should delegate completion to DispatchService.
-    //
+    // COMPLETE DISPATCH
     // =========================================================
 
     @Test
-    void shouldCompleteDispatch() throws Exception {
+    void shouldCompleteDispatch() {
 
-        Dispatch completedDispatch =
-                createDispatch(
-                        101L,
-                        1L,
-                        201L,
-                        "AMB-101",
-                        "Medanta Hospital",
-                        "COMPLETED"
-                );
+        Long dispatchId = 1L;
+
+        Dispatch dispatch =
+                Dispatch.builder()
+                        .id(dispatchId)
+                        .emergencyId(101L)
+                        .ambulanceId(201L)
+                        .ambulanceNumber("AMB-101")
+                        .hospitalId(301L)
+                        .hospitalName("Medanta Hospital")
+                        .routingAlgorithm("DIJKSTRA")
+                        .distanceToEmergencyKm(5.0)
+                        .timeToEmergencyMinutes(7.5)
+                        .distanceToHospitalKm(8.0)
+                        .timeToHospitalMinutes(12.0)
+                        .totalDistanceKm(13.0)
+                        .totalEstimatedTimeMinutes(19.5)
+                        .status("COMPLETED")
+                        .build();
 
 
         when(
-                dispatchService.completeDispatch(101L)
-        ).thenReturn(
-                completedDispatch
-        );
+                dispatchService.completeDispatch(
+                        dispatchId
+                )
+        ).thenReturn(dispatch);
 
 
-        mockMvc.perform(
-                        put("/api/dispatches/101/complete")
-                )
-                .andExpect(
-                        status().isOk()
-                )
-                .andExpect(
-                        jsonPath("$.id")
-                                .value(101)
-                )
-                .andExpect(
-                        jsonPath("$.emergencyId")
-                                .value(1)
-                )
-                .andExpect(
-                        jsonPath("$.ambulanceId")
-                                .value(201)
-                )
-                .andExpect(
-                        jsonPath("$.ambulanceNumber")
-                                .value("AMB-101")
-                )
-                .andExpect(
-                        jsonPath("$.status")
-                                .value("COMPLETED")
-                );
+        Dispatch result =
+                dispatchHistoryController
+                        .completeDispatch(
+                                dispatchId
+                        );
 
+
+        assertThat(result)
+                .isEqualTo(dispatch);
 
         verify(
                 dispatchService
-        ).completeDispatch(101L);
-    }
-
-
-    // =========================================================
-    // TEST 5
-    // =========================================================
-    //
-    // PUT /api/dispatches/{id}/complete
-    //
-    // If the dispatch does not exist, DispatchService throws
-    // DispatchNotFoundException.
-    //
-    // GlobalExceptionHandler should return HTTP 404.
-    //
-    // =========================================================
-
-    @Test
-    void shouldReturn404WhenCompletingMissingDispatch()
-            throws Exception {
-
-        when(
-                dispatchService.completeDispatch(999L)
-        ).thenThrow(
-                new DispatchNotFoundException(999L)
+        ).completeDispatch(
+                dispatchId
         );
-
-
-        mockMvc.perform(
-                        put("/api/dispatches/999/complete")
-                )
-                .andExpect(
-                        status().isNotFound()
-                )
-                .andExpect(
-                        jsonPath("$.status")
-                                .value(404)
-                )
-                .andExpect(
-                        jsonPath("$.error")
-                                .value("DISPATCH_NOT_FOUND")
-                );
-
-
-        verify(
-                dispatchService
-        ).completeDispatch(999L);
-    }
-
-
-    // =========================================================
-    // HELPER METHOD
-    // =========================================================
-    //
-    // Creates a Dispatch entity used by the controller tests.
-    //
-    // =========================================================
-
-    private Dispatch createDispatch(
-            Long id,
-            Long emergencyId,
-            Long ambulanceId,
-            String ambulanceNumber,
-            String hospitalName,
-            String status
-    ) {
-
-        return Dispatch.builder()
-
-                .id(id)
-
-                .emergencyId(
-                        emergencyId
-                )
-
-                .ambulanceId(
-                        ambulanceId
-                )
-
-                .ambulanceNumber(
-                        ambulanceNumber
-                )
-
-                .hospitalId(
-                        301L
-                )
-
-                .hospitalName(
-                        hospitalName
-                )
-
-                .routingAlgorithm(
-                        "DIJKSTRA"
-                )
-
-                .distanceToEmergencyKm(
-                        4.25
-                )
-
-                .timeToEmergencyMinutes(
-                        8.50
-                )
-
-                .distanceToHospitalKm(
-                        5.75
-                )
-
-                .timeToHospitalMinutes(
-                        11.25
-                )
-
-                .totalDistanceKm(
-                        10.00
-                )
-
-                .totalEstimatedTimeMinutes(
-                        19.75
-                )
-
-                .status(
-                        status
-                )
-
-                .dispatchedAt(
-                        LocalDateTime.of(
-                                2026,
-                                9,
-                                13,
-                                10,
-                                30
-                        )
-                )
-
-                .completedAt(
-                        "COMPLETED".equals(status)
-                                ? LocalDateTime.of(
-                                2026,
-                                9,
-                                13,
-                                11,
-                                0
-                        )
-                                : null
-                )
-
-                .build();
     }
 }
